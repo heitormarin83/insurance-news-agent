@@ -1,0 +1,257 @@
+# Configuração das fontes de notícias de seguros
+
+brasil:
+  revista_apolice:
+    name: "Revista Apólice"
+    url: "https://revistaapolice.com.br/categoria/noticias/"
+    region: "Brasil"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 2
+    selectors:
+      articles: "article, .post"
+      title: "h3 a, .entry-title a"
+      link: "h3 a, .entry-title a"
+      date: ".date, .published, time"
+      summary: ".excerpt, .summary"
+    enabled: true
+
+  cnseg_noticias:
+    name: "CNseg - Notícias do Seguro"
+    url: "https://noticiasdoseguro.org.br/noticias"
+    region: "Brasil"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 1
+    selectors:
+      articles: ".news-item, article"
+      title: "h2 a, h3 a, .title a"
+      link: "h2 a, h3 a, .title a"
+      date: ".date, .published"
+      summary: ".summary, .excerpt"
+    enabled: true
+
+  revista_segurador_brasil:
+    name: "Revista Segurador Brasil"
+    url: "https://revistaseguradorbrasil.com.br/"
+    region: "Brasil"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 3
+    enabled: true
+
+  seguro_total:
+    name: "Revista Seguro Total"
+    url: "https://revistasegurototal.com.br/"
+    region: "Brasil"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 4
+    enabled: true
+
+  open_insurance_brasil:
+    name: "Open Insurance Brasil"
+    url: "https://opinbrasil.com.br/cidadao/noticias"
+    region: "Brasil"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 1
+    categories: ["open_insurance"]
+    enabled: true
+
+america_sul:
+  todo_riesgo_argentina:
+    name: "Todo Riesgo Argentina"
+    url: "https://www.todoriesgo.com.ar/"
+    region: "América do Sul"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 6
+    enabled: true
+
+  mercado_asegurador_argentina:
+    name: "Mercado Asegurador Argentina"
+    url: "https://www.mercadoasegurador.com.ar/"
+    region: "América do Sul"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 6
+    enabled: true
+
+  fasecolda_colombia:
+    name: "Fasecolda Colombia"
+    url: "https://www.fasecolda.com/"
+    region: "América do Sul"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 8
+    enabled: true
+
+  diario_financiero_chile:
+    name: "Diario Financiero Chile - Seguros"
+    url: "https://www.df.cl/mercados/seguros"
+    region: "América do Sul"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 6
+    enabled: true
+
+eua:
+  insurance_journal:
+    name: "Insurance Journal"
+    url: "https://www.insurancejournal.com/"
+    region: "Estados Unidos"
+    source_type: "rss"
+    rss_url: "https://www.insurancejournal.com/feed/"
+    priority: "high"
+    update_frequency_hours: 1
+    enabled: true
+
+  business_insurance:
+    name: "Business Insurance"
+    url: "https://www.businessinsurance.com/"
+    region: "Estados Unidos"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 2
+    enabled: true
+
+  property_casualty_360:
+    name: "PropertyCasualty360"
+    url: "https://www.propertycasualty360.com/"
+    region: "Estados Unidos"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 2
+    enabled: true
+
+  am_best_news:
+    name: "AM Best News"
+    url: "https://news.ambest.com/"
+    region: "Estados Unidos"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 2
+    enabled: true
+
+  risk_insurance:
+    name: "Risk & Insurance"
+    url: "https://riskandinsurance.com/"
+    region: "Estados Unidos"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 4
+    enabled: true
+
+  insurance_thought_leadership:
+    name: "Insurance Thought Leadership"
+    url: "https://www.insurancethoughtleadership.com/"
+    region: "Estados Unidos"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 6
+    categories: ["thought_leadership", "innovation"]
+    enabled: true
+
+europa:
+  eiopa:
+    name: "EIOPA"
+    url: "https://www.eiopa.europa.eu/"
+    region: "Europa"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 2
+    categories: ["regulation", "open_insurance"]
+    enabled: true
+
+  insurance_europe:
+    name: "Insurance Europe"
+    url: "https://insuranceeurope.eu/"
+    region: "Europa"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 4
+    categories: ["regulation", "policy"]
+    enabled: true
+
+  fca_uk:
+    name: "FCA UK"
+    url: "https://www.fca.org.uk/news"
+    region: "Europa"
+    source_type: "web_scraping"
+    priority: "high"
+    update_frequency_hours: 4
+    categories: ["regulation", "open_finance"]
+    enabled: true
+
+  the_insurer:
+    name: "The Insurer"
+    url: "https://www.theinsurer.com/"
+    region: "Europa"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 4
+    enabled: true
+
+  post_magazine_uk:
+    name: "Post Magazine UK"
+    url: "https://www.postonline.co.uk/"
+    region: "Europa"
+    source_type: "web_scraping"
+    priority: "medium"
+    update_frequency_hours: 6
+    enabled: true
+
+# Configurações globais
+global_settings:
+  max_articles_per_source: 50
+  max_age_days: 7
+  default_timeout: 30
+  retry_attempts: 3
+  delay_between_requests: 2
+  user_agent: "Insurance News Agent 1.0"
+  
+# Filtros de relevância
+relevance_filters:
+  open_insurance_keywords:
+    - "open insurance"
+    - "open banking"
+    - "seguros abertos"
+    - "sistema de seguros aberto"
+    - "opin"
+    - "apis de seguros"
+    - "compartilhamento de dados"
+    - "fida"
+    - "eiopa"
+    - "dados abertos seguros"
+    - "interoperabilidade seguros"
+  
+  high_priority_keywords:
+    - "regulamentação"
+    - "susep"
+    - "cnseg"
+    - "lei de seguros"
+    - "nova lei"
+    - "circular susep"
+    - "resolução"
+    - "normativa"
+    - "compliance"
+    - "transformação digital"
+    - "insurtech"
+  
+  insurance_keywords:
+    - "seguro"
+    - "seguros"
+    - "insurance"
+    - "assurance"
+    - "apólice"
+    - "sinistro"
+    - "prêmio"
+    - "resseguro"
+    - "corretora"
+    - "seguradora"
+    - "proteção"
+    - "cobertura"
+    - "indenização"
+    - "subscrição"
+
