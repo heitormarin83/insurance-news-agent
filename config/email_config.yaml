@@ -1,0 +1,28 @@
+gmail:
+  credentials_file: config/credentials.json
+  sender_name: Insurance News Agent
+  token_file: config/token.json
+logging:
+  log_directory: logs/email
+  log_retention_days: 30
+  save_email_logs: true
+recipients:
+  alerts: []
+  daily_report: []
+  errors: []
+retry:
+  delay_between_attempts: 60
+  max_attempts: 3
+  notify_on_failure: true
+sending:
+  alert_relevance_threshold: 0.7
+  daily_report_time: 08:00
+  immediate_open_insurance_alerts: true
+  timezone: America/Sao_Paulo
+  weekdays_only: true
+templates:
+  include_article_summaries: true
+  include_detailed_stats: true
+  max_open_insurance_articles: 5
+  max_summary_length: 200
+  max_top_articles: 10
