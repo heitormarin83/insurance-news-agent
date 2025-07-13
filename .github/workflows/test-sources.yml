@@ -1,0 +1,139 @@
+name: Test News Sources
+
+on:
+  # Executa toda segunda-feira às 6:00 UTC para verificar saúde das fontes
+  schedule:
+    - cron: '0 6 * * 1'
+  
+  # Permite execução manual
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Testar apenas uma região específica'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - Brasil
+        - América do Sul
+        - Estados Unidos
+        - Europa
+
+jobs:
+  test-sources:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create directories
+      run: |
+        mkdir -p logs
+        mkdir -p data/tests
+    
+    - name: Test all sources
+      id: test
+      run: |
+        echo "🧪 Testando fontes de notícias..."
+        python -m src.main --action test > test_results.log 2>&1
+        
+        # Extrai estatísticas do teste
+        if grep -q "Testes concluídos" test_results.log; then
+          SUCCESS_RATE=$(grep "Testes concluídos" test_results.log | grep -oE '[0-9]+/[0-9]+' | head -1)
+          echo "success_rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+          echo "test_completed=true" >> $GITHUB_OUTPUT
+        else
+          echo "test_completed=false" >> $GITHUB_OUTPUT
+        fi
+        
+        # Conta fontes com problemas
+        FAILED_SOURCES=$(grep -c "❌" test_results.log || echo "0")
+        echo "failed_sources=$FAILED_SOURCES" >> $GITHUB_OUTPUT
+    
+    - name: Generate test report
+      run: |
+        echo "# 🧪 Relatório de Teste das Fontes - $(date '+%d/%m/%Y')" > test_report.md
+        echo "" >> test_report.md
+        echo "## Resumo" >> test_report.md
+        echo "- **Data do teste**: $(date '+%d/%m/%Y às %H:%M UTC')" >> test_report.md
+        echo "- **Fontes testadas**: ${{ steps.test.outputs.success_rate }}" >> test_report.md
+        echo "- **Fontes com falha**: ${{ steps.test.outputs.failed_sources }}" >> test_report.md
+        echo "" >> test_report.md
+        echo "## Detalhes" >> test_report.md
+        echo '```' >> test_report.md
+        cat test_results.log >> test_report.md
+        echo '```' >> test_report.md
+    
+    - name: Send notification if many failures
+      if: steps.test.outputs.failed_sources > 5
+      env:
+        GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
+        GMAIL_TOKEN: ${{ secrets.GMAIL_TOKEN }}
+        EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
+      run: |
+        echo "🚨 Muitas fontes com falha, enviando notificação..."
+        
+        # Setup básico de e-mail
+        mkdir -p config
+        echo "$GMAIL_CREDENTIALS" > config/credentials.json
+        if [ ! -z "$GMAIL_TOKEN" ]; then
+          echo "$GMAIL_TOKEN" > config/token.json
+        fi
+        
+        python scripts/setup_email_config.py
+        
+        # Envia notificação
+        python scripts/send_error_notification.py
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: source-tests-${{ github.run_number }}
+        path: |
+          test_results.log
+          test_report.md
+        retention-days: 30
+    
+    - name: Update job summary
+      if: always()
+      run: |
+        echo "## 🧪 Teste das Fontes de Notícias" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.test.outputs.test_completed }}" == "true" ]; then
+          echo "✅ **Status**: Teste concluído" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Resultado**: ${{ steps.test.outputs.success_rate }} fontes funcionando" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.test.outputs.failed_sources }}" -gt "0" ]; then
+            echo "⚠️ **Atenção**: ${{ steps.test.outputs.failed_sources }} fontes com problemas" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "❌ **Status**: Erro no teste" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🕐 **Executado em**: $(date '+%d/%m/%Y às %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        
+        # Mostra fontes com problema se houver
+        if [ "${{ steps.test.outputs.failed_sources }}" -gt "0" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ Fontes com Problemas:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep "❌" test_results.log | head -10 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
+
