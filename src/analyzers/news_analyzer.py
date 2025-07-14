@@ -1,367 +1,420 @@
-""
-Analisador de notícias para processamento e filtragem
+"""
+Analisador de notícias para processamento e classificação
 """
 
-from typing import List, Dict, Any, Tuple
+import re
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from collections import defaultdict, Counter
-import statistics
+import nltk
+from textblob import TextBlob
 
 from src.models import NewsArticle, Region
 from src.utils.logger import get_logger
-from src.utils.text_processor import text_processor
+from src.utils.text_processor import TextProcessor
 
 logger = get_logger("news_analyzer")
 
 
 class NewsAnalyzer:
-    """Analisador de notícias coletadas"""
+    """Analisador de notícias com IA para classificação e processamento"""
     
     def __init__(self):
-        """Inicializa o analisador de notícias"""
-        self.min_relevance_score = 0.1
-        self.max_articles_per_source = 10
-        
-        logger.info("News Analyzer inicializado")
+        """Inicializa o analisador"""
+        self.text_processor = TextProcessor()
+        self._download_nltk_data()
+        logger.info("NewsAnalyzer inicializado")
+    
+    def _download_nltk_data(self):
+        """Baixa dados necessários do NLTK"""
+        try:
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+            nltk.download('vader_lexicon', quiet=True)
+        except Exception as e:
+            logger.warning(f"Erro ao baixar dados NLTK: {e}")
     
     def analyze_articles(self, articles: List[NewsArticle]) -> Dict[str, Any]:
         """
-        Analisa lista de artigos e gera estatísticas
+        Analisa lista de artigos e retorna estatísticas
         
         Args:
-            articles: Lista de artigos para análise
+            articles: Lista de artigos para analisar
             
         Returns:
-            Dicionário com análises e estatísticas
+            Dicionário com estatísticas e análises
         """
-        if not articles:
-            return {
-                'total_articles': 0,
-                'analysis_timestamp': datetime.now(),
-                'error': 'Nenhum artigo para analisar'
+        try:
+            if not articles:
+                return self._empty_analysis()
+            
+            logger.info(f"Analisando {len(articles)} artigos")
+            
+            # Análises básicas
+            total_articles = len(articles)
+            articles_by_region = self._count_by_region(articles)
+            articles_by_source = self._count_by_source(articles)
+            articles_by_category = self._count_by_category(articles)
+            
+            # Análises avançadas
+            top_articles = self._get_top_articles(articles, limit=10)
+            open_insurance_articles = self._filter_open_insurance(articles)
+            trending_keywords = self._extract_trending_keywords(articles)
+            sentiment_analysis = self._analyze_sentiment(articles)
+            
+            # Estatísticas temporais
+            time_distribution = self._analyze_time_distribution(articles)
+            
+            analysis = {
+                'total_articles': total_articles,
+                'articles_by_region': articles_by_region,
+                'articles_by_source': articles_by_source,
+                'articles_by_category': articles_by_category,
+                'top_articles': top_articles,
+                'open_insurance_articles': open_insurance_articles,
+                'open_insurance_count': len(open_insurance_articles),
+                'trending_keywords': trending_keywords,
+                'sentiment_analysis': sentiment_analysis,
+                'time_distribution': time_distribution,
+                'analysis_timestamp': datetime.now().isoformat()
             }
-        
-        logger.info(f"Analisando {len(articles)} artigos")
-        
-        analysis = {
-            'total_articles': len(articles),
-            'analysis_timestamp': datetime.now(),
-            'by_region': self._analyze_by_region(articles),
-            'by_source': self._analyze_by_source(articles),
-            'by_category': self._analyze_by_category(articles),
-            'by_date': self._analyze_by_date(articles),
-            'relevance_stats': self._analyze_relevance(articles),
-            'open_insurance_stats': self._analyze_open_insurance(articles),
-            'top_keywords': self._extract_top_keywords(articles),
-            'quality_metrics': self._calculate_quality_metrics(articles)
+            
+            logger.info(f"Análise concluída: {total_articles} artigos, {len(open_insurance_articles)} Open Insurance")
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Erro na análise de artigos: {e}")
+            return self._empty_analysis()
+    
+    def _empty_analysis(self) -> Dict[str, Any]:
+        """Retorna análise vazia"""
+        return {
+            'total_articles': 0,
+            'articles_by_region': {},
+            'articles_by_source': {},
+            'articles_by_category': {},
+            'top_articles': [],
+            'open_insurance_articles': [],
+            'open_insurance_count': 0,
+            'trending_keywords': [],
+            'sentiment_analysis': {},
+            'time_distribution': {},
+            'analysis_timestamp': datetime.now().isoformat()
         }
-        
-        logger.info(f"Análise concluída: {analysis['total_articles']} artigos processados")
-        
-        return analysis
     
-    def _analyze_by_region(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa artigos por região"""
-        region_stats = defaultdict(int)
-        region_articles = defaultdict(list)
-        
+    def _count_by_region(self, articles: List[NewsArticle]) -> Dict[str, int]:
+        """Conta artigos por região"""
+        count = {}
         for article in articles:
-            region = article.region.value
-            region_stats[region] += 1
-            region_articles[region].append(article)
-        
-        # Calcula estatísticas por região
-        region_analysis = {}
-        for region, count in region_stats.items():
-            articles_in_region = region_articles[region]
-            avg_relevance = statistics.mean([a.relevance_score for a in articles_in_region])
-            open_insurance_count = sum(1 for a in articles_in_region if a.open_insurance_related)
-            
-            region_analysis[region] = {
-                'count': count,
-                'percentage': (count / len(articles)) * 100,
-                'avg_relevance': round(avg_relevance, 3),
-                'open_insurance_count': open_insurance_count,
-                'top_sources': self._get_top_sources_in_region(articles_in_region)
-            }
-        
-        return region_analysis
+            region = article.region.value if article.region else 'Desconhecido'
+            count[region] = count.get(region, 0) + 1
+        return count
     
-    def _analyze_by_source(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa artigos por fonte"""
-        source_stats = defaultdict(int)
-        source_articles = defaultdict(list)
-        
+    def _count_by_source(self, articles: List[NewsArticle]) -> Dict[str, int]:
+        """Conta artigos por fonte"""
+        count = {}
         for article in articles:
-            source = article.source
-            source_stats[source] += 1
-            source_articles[source].append(article)
-        
-        # Ordena fontes por número de artigos
-        sorted_sources = sorted(source_stats.items(), key=lambda x: x[1], reverse=True)
-        
-        source_analysis = {}
-        for source, count in sorted_sources:
-            articles_from_source = source_articles[source]
-            avg_relevance = statistics.mean([a.relevance_score for a in articles_from_source])
-            
-            source_analysis[source] = {
-                'count': count,
-                'percentage': (count / len(articles)) * 100,
-                'avg_relevance': round(avg_relevance, 3),
-                'region': articles_from_source[0].region.value,
-                'open_insurance_count': sum(1 for a in articles_from_source if a.open_insurance_related)
-            }
-        
-        return source_analysis
+            source = article.source or 'Desconhecido'
+            count[source] = count.get(source, 0) + 1
+        return count
     
-    def _analyze_by_category(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa artigos por categoria"""
-        category_counter = Counter()
-        
+    def _count_by_category(self, articles: List[NewsArticle]) -> Dict[str, int]:
+        """Conta artigos por categoria"""
+        count = {}
         for article in articles:
             for category in article.categories:
-                category_counter[category] += 1
-        
-        total_categories = sum(category_counter.values())
-        
-        category_analysis = {}
-        for category, count in category_counter.most_common():
-            category_analysis[category] = {
-                'count': count,
-                'percentage': (count / total_categories) * 100 if total_categories > 0 else 0
-            }
-        
-        return category_analysis
+                count[category] = count.get(category, 0) + 1
+        return count
     
-    def _analyze_by_date(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa artigos por data"""
-        date_stats = defaultdict(int)
-        
-        for article in articles:
-            date_key = article.date_published.strftime('%Y-%m-%d')
-            date_stats[date_key] += 1
-        
-        # Ordena por data
-        sorted_dates = sorted(date_stats.items())
-        
-        # Calcula estatísticas temporais
-        if articles:
-            dates = [a.date_published for a in articles]
-            oldest_date = min(dates)
-            newest_date = max(dates)
-            date_range = (newest_date - oldest_date).days
-        else:
-            oldest_date = newest_date = datetime.now()
-            date_range = 0
-        
-        return {
-            'by_day': dict(sorted_dates),
-            'oldest_article': oldest_date.isoformat(),
-            'newest_article': newest_date.isoformat(),
-            'date_range_days': date_range,
-            'articles_last_24h': self._count_articles_in_period(articles, hours=24),
-            'articles_last_week': self._count_articles_in_period(articles, days=7)
-        }
+    def _get_top_articles(self, articles: List[NewsArticle], limit: int = 10) -> List[Dict[str, Any]]:
+        """Retorna top artigos por relevância"""
+        try:
+            # Ordena por score de relevância
+            sorted_articles = sorted(
+                articles, 
+                key=lambda x: x.relevance_score or 0, 
+                reverse=True
+            )
+            
+            top_articles = []
+            for article in sorted_articles[:limit]:
+                top_articles.append({
+                    'title': article.title,
+                    'url': article.url,
+                    'source': article.source,
+                    'region': article.region.value if article.region else 'Desconhecido',
+                    'relevance_score': article.relevance_score,
+                    'date_published': article.date_published.isoformat() if article.date_published else None,
+                    'summary': article.summary[:200] + '...' if article.summary and len(article.summary) > 200 else article.summary,
+                    'open_insurance_related': article.open_insurance_related,
+                    'categories': article.categories
+                })
+            
+            return top_articles
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter top artigos: {e}")
+            return []
     
-    def _analyze_relevance(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa scores de relevância"""
-        if not articles:
-            return {}
-        
-        scores = [a.relevance_score for a in articles]
-        
-        return {
-            'avg_score': round(statistics.mean(scores), 3),
-            'median_score': round(statistics.median(scores), 3),
-            'min_score': round(min(scores), 3),
-            'max_score': round(max(scores), 3),
-            'std_dev': round(statistics.stdev(scores) if len(scores) > 1 else 0, 3),
-            'high_relevance_count': sum(1 for s in scores if s >= 0.7),
-            'medium_relevance_count': sum(1 for s in scores if 0.3 <= s < 0.7),
-            'low_relevance_count': sum(1 for s in scores if s < 0.3)
-        }
+    def _filter_open_insurance(self, articles: List[NewsArticle]) -> List[NewsArticle]:
+        """Filtra artigos relacionados a Open Insurance"""
+        return [article for article in articles if article.open_insurance_related]
     
-    def _analyze_open_insurance(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Analisa artigos relacionados a Open Insurance"""
-        open_insurance_articles = [a for a in articles if a.open_insurance_related]
-        
-        if not open_insurance_articles:
+    def _extract_trending_keywords(self, articles: List[NewsArticle], limit: int = 20) -> List[Dict[str, Any]]:
+        """Extrai palavras-chave em tendência"""
+        try:
+            keyword_count = {}
+            
+            for article in articles:
+                # Combina título e resumo para análise
+                text = f"{article.title} {article.summary or ''}"
+                keywords = self.text_processor.extract_keywords(text)
+                
+                for keyword in keywords:
+                    keyword_count[keyword] = keyword_count.get(keyword, 0) + 1
+            
+            # Ordena por frequência
+            trending = sorted(
+                keyword_count.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )[:limit]
+            
+            return [
+                {'keyword': keyword, 'count': count, 'relevance': count / len(articles)}
+                for keyword, count in trending
+            ]
+            
+        except Exception as e:
+            logger.error(f"Erro ao extrair keywords: {e}")
+            return []
+    
+    def _analyze_sentiment(self, articles: List[NewsArticle]) -> Dict[str, Any]:
+        """Analisa sentimento geral dos artigos"""
+        try:
+            if not articles:
+                return {'positive': 0, 'neutral': 0, 'negative': 0, 'average_polarity': 0.0}
+            
+            sentiments = {'positive': 0, 'neutral': 0, 'negative': 0}
+            total_polarity = 0.0
+            
+            for article in articles:
+                text = f"{article.title} {article.summary or ''}"
+                
+                try:
+                    blob = TextBlob(text)
+                    polarity = blob.sentiment.polarity
+                    total_polarity += polarity
+                    
+                    if polarity > 0.1:
+                        sentiments['positive'] += 1
+                    elif polarity < -0.1:
+                        sentiments['negative'] += 1
+                    else:
+                        sentiments['neutral'] += 1
+                        
+                except Exception:
+                    sentiments['neutral'] += 1
+            
+            average_polarity = total_polarity / len(articles) if articles else 0.0
+            
             return {
-                'count': 0,
-                'percentage': 0,
-                'by_region': {},
-                'by_source': {},
-                'avg_relevance': 0
+                **sentiments,
+                'average_polarity': round(average_polarity, 3),
+                'total_analyzed': len(articles)
             }
-        
-        # Análise por região
-        region_count = defaultdict(int)
-        for article in open_insurance_articles:
-            region_count[article.region.value] += 1
-        
-        # Análise por fonte
-        source_count = defaultdict(int)
-        for article in open_insurance_articles:
-            source_count[article.source] += 1
-        
-        avg_relevance = statistics.mean([a.relevance_score for a in open_insurance_articles])
-        
-        return {
-            'count': len(open_insurance_articles),
-            'percentage': (len(open_insurance_articles) / len(articles)) * 100,
-            'by_region': dict(region_count),
-            'by_source': dict(source_count),
-            'avg_relevance': round(avg_relevance, 3)
-        }
+            
+        except Exception as e:
+            logger.error(f"Erro na análise de sentimento: {e}")
+            return {'positive': 0, 'neutral': 0, 'negative': 0, 'average_polarity': 0.0}
     
-    def _extract_top_keywords(self, articles: List[NewsArticle], top_n: int = 20) -> List[Tuple[str, int]]:
-        """Extrai palavras-chave mais frequentes"""
-        all_text = ""
-        
-        for article in articles:
-            all_text += f" {article.title} {article.summary}"
-        
-        keywords = text_processor.extract_keywords(all_text, max_keywords=top_n * 2)
-        
-        # Conta frequência das keywords
-        keyword_counter = Counter()
-        for article in articles:
-            article_text = f"{article.title} {article.summary}".lower()
-            for keyword in keywords:
-                if keyword in article_text:
-                    keyword_counter[keyword] += 1
-        
-        return keyword_counter.most_common(top_n)
+    def _analyze_time_distribution(self, articles: List[NewsArticle]) -> Dict[str, Any]:
+        """Analisa distribuição temporal dos artigos"""
+        try:
+            now = datetime.now()
+            time_buckets = {
+                'last_hour': 0,
+                'last_6_hours': 0,
+                'last_24_hours': 0,
+                'last_week': 0,
+                'older': 0
+            }
+            
+            for article in articles:
+                if not article.date_published:
+                    time_buckets['older'] += 1
+                    continue
+                
+                time_diff = now - article.date_published
+                
+                if time_diff <= timedelta(hours=1):
+                    time_buckets['last_hour'] += 1
+                elif time_diff <= timedelta(hours=6):
+                    time_buckets['last_6_hours'] += 1
+                elif time_diff <= timedelta(hours=24):
+                    time_buckets['last_24_hours'] += 1
+                elif time_diff <= timedelta(days=7):
+                    time_buckets['last_week'] += 1
+                else:
+                    time_buckets['older'] += 1
+            
+            return time_buckets
+            
+        except Exception as e:
+            logger.error(f"Erro na análise temporal: {e}")
+            return {'last_hour': 0, 'last_6_hours': 0, 'last_24_hours': 0, 'last_week': 0, 'older': 0}
     
-    def _calculate_quality_metrics(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Calcula métricas de qualidade dos artigos"""
-        if not articles:
-            return {}
-        
-        # Artigos com resumo
-        with_summary = sum(1 for a in articles if a.summary and len(a.summary) > 50)
-        
-        # Artigos com conteúdo
-        with_content = sum(1 for a in articles if a.content and len(a.content) > 100)
-        
-        # Artigos com categorias
-        with_categories = sum(1 for a in articles if a.categories)
-        
-        # Artigos recentes (últimas 48h)
-        recent_articles = self._count_articles_in_period(articles, hours=48)
-        
-        return {
-            'with_summary_percentage': (with_summary / len(articles)) * 100,
-            'with_content_percentage': (with_content / len(articles)) * 100,
-            'with_categories_percentage': (with_categories / len(articles)) * 100,
-            'recent_articles_percentage': (recent_articles / len(articles)) * 100,
-            'avg_title_length': round(statistics.mean([len(a.title) for a in articles]), 1),
-            'avg_summary_length': round(statistics.mean([len(a.summary) for a in articles if a.summary]), 1)
-        }
-    
-    def _get_top_sources_in_region(self, articles: List[NewsArticle], top_n: int = 3) -> List[Dict[str, Any]]:
-        """Obtém principais fontes em uma região"""
-        source_count = defaultdict(int)
-        
-        for article in articles:
-            source_count[article.source] += 1
-        
-        top_sources = []
-        for source, count in sorted(source_count.items(), key=lambda x: x[1], reverse=True)[:top_n]:
-            top_sources.append({
-                'source': source,
-                'count': count
-            })
-        
-        return top_sources
-    
-    def _count_articles_in_period(self, articles: List[NewsArticle], days: int = 0, hours: int = 0) -> int:
-        """Conta artigos em um período específico"""
-        cutoff_time = datetime.now() - timedelta(days=days, hours=hours)
-        return sum(1 for a in articles if a.date_published >= cutoff_time)
-    
-    def filter_articles(self, articles: List[NewsArticle], filters: Dict[str, Any]) -> List[NewsArticle]:
+    def calculate_similarity(self, article1: NewsArticle, article2: NewsArticle) -> float:
         """
-        Filtra artigos baseado em critérios
+        Calcula similaridade entre dois artigos
+        
+        Args:
+            article1: Primeiro artigo
+            article2: Segundo artigo
+            
+        Returns:
+            Score de similaridade (0.0 a 1.0)
+        """
+        try:
+            text1 = f"{article1.title} {article1.summary or ''}"
+            text2 = f"{article2.title} {article2.summary or ''}"
+            
+            return self.text_processor.calculate_similarity(text1, text2)
+            
+        except Exception as e:
+            logger.error(f"Erro ao calcular similaridade: {e}")
+            return 0.0
+    
+    def find_duplicates(self, articles: List[NewsArticle], threshold: float = 0.8) -> List[List[NewsArticle]]:
+        """
+        Encontra artigos duplicados ou muito similares
         
         Args:
             articles: Lista de artigos
-            filters: Critérios de filtragem
+            threshold: Limite de similaridade para considerar duplicata
             
         Returns:
-            Lista de artigos filtrados
+            Lista de grupos de artigos similares
         """
-        filtered = articles.copy()
-        
-        # Filtro por relevância mínima
-        min_relevance = filters.get('min_relevance', self.min_relevance_score)
-        filtered = [a for a in filtered if a.relevance_score >= min_relevance]
-        
-        # Filtro por região
-        if 'regions' in filters:
-            allowed_regions = [Region(r) for r in filters['regions']]
-            filtered = [a for a in filtered if a.region in allowed_regions]
-        
-        # Filtro por fonte
-        if 'sources' in filters:
-            allowed_sources = filters['sources']
-            filtered = [a for a in filtered if a.source in allowed_sources]
-        
-        # Filtro por categoria
-        if 'categories' in filters:
-            required_categories = filters['categories']
-            filtered = [a for a in filtered if any(cat in a.categories for cat in required_categories)]
-        
-        # Filtro por Open Insurance
-        if filters.get('open_insurance_only', False):
-            filtered = [a for a in filtered if a.open_insurance_related]
-        
-        # Filtro por período
-        if 'max_age_hours' in filters:
-            cutoff_time = datetime.now() - timedelta(hours=filters['max_age_hours'])
-            filtered = [a for a in filtered if a.date_published >= cutoff_time]
-        
-        # Limita número de artigos por fonte
-        max_per_source = filters.get('max_per_source', self.max_articles_per_source)
-        if max_per_source > 0:
-            filtered = self._limit_articles_per_source(filtered, max_per_source)
-        
-        logger.info(f"Filtros aplicados: {len(articles)} -> {len(filtered)} artigos")
-        
-        return filtered
+        try:
+            duplicates = []
+            processed = set()
+            
+            for i, article1 in enumerate(articles):
+                if i in processed:
+                    continue
+                
+                similar_group = [article1]
+                
+                for j, article2 in enumerate(articles[i+1:], i+1):
+                    if j in processed:
+                        continue
+                    
+                    similarity = self.calculate_similarity(article1, article2)
+                    
+                    if similarity >= threshold:
+                        similar_group.append(article2)
+                        processed.add(j)
+                
+                if len(similar_group) > 1:
+                    duplicates.append(similar_group)
+                
+                processed.add(i)
+            
+            logger.info(f"Encontrados {len(duplicates)} grupos de artigos similares")
+            return duplicates
+            
+        except Exception as e:
+            logger.error(f"Erro ao encontrar duplicatas: {e}")
+            return []
     
-    def _limit_articles_per_source(self, articles: List[NewsArticle], max_per_source: int) -> List[NewsArticle]:
-        """Limita número de artigos por fonte"""
-        source_articles = defaultdict(list)
-        
-        # Agrupa por fonte
-        for article in articles:
-            source_articles[article.source].append(article)
-        
-        # Ordena cada fonte por relevância e limita
-        limited_articles = []
-        for source, source_list in source_articles.items():
-            # Ordena por relevância (maior primeiro)
-            sorted_articles = sorted(source_list, key=lambda x: x.relevance_score, reverse=True)
-            limited_articles.extend(sorted_articles[:max_per_source])
-        
-        # Ordena resultado final por relevância
-        return sorted(limited_articles, key=lambda x: x.relevance_score, reverse=True)
-    
-    def get_top_articles(self, articles: List[NewsArticle], top_n: int = 10) -> List[NewsArticle]:
+    def classify_article_importance(self, article: NewsArticle) -> str:
         """
-        Obtém os principais artigos por relevância
+        Classifica importância do artigo
+        
+        Args:
+            article: Artigo para classificar
+            
+        Returns:
+            Nível de importância: 'alta', 'média', 'baixa'
+        """
+        try:
+            score = article.relevance_score or 0.0
+            
+            # Fatores que aumentam importância
+            if article.open_insurance_related:
+                score += 0.2
+            
+            if 'regulamentação' in article.title.lower():
+                score += 0.15
+            
+            if any(keyword in article.title.lower() for keyword in ['susep', 'cnseg', 'bacen']):
+                score += 0.1
+            
+            # Classificação
+            if score >= 0.8:
+                return 'alta'
+            elif score >= 0.5:
+                return 'média'
+            else:
+                return 'baixa'
+                
+        except Exception as e:
+            logger.error(f"Erro ao classificar importância: {e}")
+            return 'baixa'
+    
+    def generate_summary_insights(self, articles: List[NewsArticle]) -> Dict[str, Any]:
+        """
+        Gera insights resumidos sobre os artigos
         
         Args:
             articles: Lista de artigos
-            top_n: Número de artigos a retornar
             
         Returns:
-            Lista dos principais artigos
+            Dicionário com insights
         """
-        # Ordena por relevância (maior primeiro)
-        sorted_articles = sorted(articles, key=lambda x: x.relevance_score, reverse=True)
-        
-        return sorted_articles[:top_n]
+        try:
+            if not articles:
+                return {'insights': [], 'highlights': []}
+            
+            insights = []
+            highlights = []
+            
+            # Insight sobre Open Insurance
+            open_insurance_count = len([a for a in articles if a.open_insurance_related])
+            if open_insurance_count > 0:
+                insights.append(f"Foram encontradas {open_insurance_count} notícias relacionadas ao Open Insurance")
+                
+                if open_insurance_count >= 3:
+                    highlights.append("Alto volume de notícias sobre Open Insurance")
+            
+            # Insight sobre regiões
+            regions = self._count_by_region(articles)
+            most_active_region = max(regions.items(), key=lambda x: x[1]) if regions else None
+            
+            if most_active_region:
+                insights.append(f"Região mais ativa: {most_active_region[0]} com {most_active_region[1]} notícias")
+            
+            # Insight sobre fontes
+            sources = self._count_by_source(articles)
+            if len(sources) >= 5:
+                insights.append(f"Diversidade de fontes: {len(sources)} fontes diferentes")
+            
+            # Insight sobre timing
+            recent_articles = [a for a in articles if a.date_published and 
+                             (datetime.now() - a.date_published) <= timedelta(hours=24)]
+            
+            if len(recent_articles) >= len(articles) * 0.7:
+                highlights.append("Maioria das notícias são recentes (últimas 24h)")
+            
+            return {
+                'insights': insights,
+                'highlights': highlights,
+                'total_articles': len(articles),
+                'analysis_quality': 'alta' if len(articles) >= 10 else 'média' if len(articles) >= 5 else 'baixa'
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar insights: {e}")
+            return {'insights': [], 'highlights': []}
+
 
