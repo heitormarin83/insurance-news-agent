@@ -48,7 +48,23 @@ logger.info("✅ Flask app carregado com sucesso - pronto para servir via Gunico
 
 # ================== ROTAS ==================
 
-DASHBOARD_TEMPLATE = """<!DOCTYPE html>..."""  # Mantenha seu HTML completo aqui
+DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Insurance News Agent</title>
+</head>
+<body style="font-family: sans-serif; padding: 2rem;">
+    <h1>🤖 Insurance News Agent</h1>
+    <p>Status: {{ stats.status }}</p>
+    <p>Total de fontes configuradas: {{ stats.total_sources }}</p>
+    <p>Regiões cobertas: {{ stats.regions }}</p>
+    <p>Última execução: {{ stats.last_execution }}</p>
+    <p>Atualizado em: {{ current_time }}</p>
+</body>
+</html>
+"""
 
 @app.route('/')
 def dashboard():
@@ -192,4 +208,3 @@ def webhook_collect():
     except Exception as e:
         logger.error(f"❌ Erro no webhook: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
