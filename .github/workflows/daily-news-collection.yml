@@ -68,7 +68,6 @@ jobs:
         python -m src.main --action collect > collection_output.log 2>&1
         echo "collection_status=$?" >> $GITHUB_OUTPUT
         
-        # Captura estatísticas para o summary
         if [ -f "data/reports/relatorio_seguros_$(date +%Y-%m-%d).json" ]; then
           echo "report_generated=true" >> $GITHUB_OUTPUT
           TOTAL_ARTICLES=$(python -c "import json; data=json.load(open('data/reports/relatorio_seguros_$(date +%Y-%m-%d).json')); print(data['total_articles'])")
@@ -95,7 +94,7 @@ jobs:
     
     - name: Upload reports as artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: daily-reports-${{ github.run_number }}
         path: |
@@ -127,10 +126,8 @@ jobs:
           echo "🧪 **Modo**: Teste (e-mails não enviados)" >> $GITHUB_STEP_SUMMARY
         fi
 
-  # Job separado para monitoramento de fontes
   monitor-sources:
     runs-on: ubuntu-latest
-    # Executa apenas às segundas-feiras para verificar saúde das fontes
     if: github.event.schedule && github.event.schedule == '0 7 * * 1'
     
     steps:
@@ -154,7 +151,7 @@ jobs:
         echo "Sources test completed"
     
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: sources-test-${{ github.run_number }}
         path: sources_test.log
