@@ -1,7 +1,7 @@
 name: Daily Insurance News Collection
 
 on:
-  # Executa todos os dias às 7:00 UTC (4:00 BRT)
+  # Executa todos os dias às 7:00 UTC (4:00 BRT).
   schedule:
     - cron: '0 7 * * *'
   
