@@ -208,3 +208,8 @@ def webhook_collect():
     except Exception as e:
         logger.error(f"❌ Erro no webhook: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"🚀 Iniciando servidor Flask na porta {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)
