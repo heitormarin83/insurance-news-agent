@@ -65,7 +65,9 @@ jobs:
     - name: Run news collection
       id: collection
       run: |
-        python -m src.main --action collect > collection_output.log 2>&1
+        cd $GITHUB_WORKSPACE
+        export PYTHONPATH=$GITHUB_WORKSPACE:$PYTHONPATH
+        python src/main.py --action collect > collection_output.log 2>&1
         echo "collection_status=$?" >> $GITHUB_OUTPUT
         
         if [ -f "data/reports/relatorio_seguros_$(date +%Y-%m-%d).json" ]; then
@@ -147,7 +149,9 @@ jobs:
     
     - name: Test all sources
       run: |
-        python -m src.main --action test > sources_test.log 2>&1
+        cd $GITHUB_WORKSPACE
+        export PYTHONPATH=$GITHUB_WORKSPACE:$PYTHONPATH
+        python src/main.py --action test > sources_test.log 2>&1
         echo "Sources test completed"
     
     - name: Upload test results
@@ -156,4 +160,3 @@ jobs:
         name: sources-test-${{ github.run_number }}
         path: sources_test.log
         retention-days: 7
-
