@@ -411,7 +411,30 @@ class NewsAnalyzer:
                 'highlights': highlights,
                 'total_articles': len(articles),
                 'analysis_quality': 'alta' if len(articles) >= 10 else 'média' if len(articles) >= 5 else 'baixa'
-            }
+          def filter_articles(self, articles, criteria=None):
+        """
+        Filtra artigos baseado em critérios de relevância
+        
+        Args:
+            articles: Lista de artigos para filtrar
+            criteria: Critérios de filtro (opcional)
+            
+        Returns:
+            Lista de artigos filtrados
+        """
+        if not criteria:
+            criteria = {}
+        
+        filtered = []
+        for article in articles:
+            # Verifica relevância do artigo
+            text_to_analyze = f"{article.title} {article.summary}"
+            
+            if self.is_relevant(text_to_analyze):
+                filtered.append(article)
+        
+        self.logger.info(f"Filtrados {len(filtered)} artigos de {len(articles)} total")
+        return filtered  }
             
         except Exception as e:
             logger.error(f"Erro ao gerar insights: {e}")
