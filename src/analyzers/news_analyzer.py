@@ -423,6 +423,29 @@ class NewsAnalyzer:
         self.logger.info(f"Filtrados {len(filtered)} artigos de {len(articles)} total")
         return filtered
     
+    def get_top_articles(self, articles: List[NewsArticle], top_n: int = 15) -> List[NewsArticle]:
+        """
+        Retorna os artigos mais relevantes
+        
+        Args:
+            articles: Lista de artigos
+            top_n: Número de artigos para retornar
+            
+        Returns:
+            Lista dos artigos mais relevantes
+        """
+        # Calcula relevância se não foi calculada
+        for article in articles:
+            if not hasattr(article, 'relevance_score'):
+                article.relevance_score = self.calculate_relevance_score(article)
+        
+        # Ordena por relevância (maior para menor)
+        sorted_articles = sorted(articles, key=lambda x: x.relevance_score, reverse=True)
+        
+        self.logger.info(f"Selecionados {min(top_n, len(sorted_articles))} artigos mais relevantes de {len(articles)} total")
+        
+        return sorted_articles[:top_n]
+    
     def _extract_keywords(self, text: str) -> List[str]:
         """Extrai palavras-chave do texto"""
         # Implementação básica de extração de keywords
@@ -431,3 +454,4 @@ class NewsAnalyzer:
         stop_words = {'o', 'a', 'de', 'da', 'do', 'e', 'em', 'para', 'com', 'por', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
         keywords = [word for word in words if word not in stop_words and len(word) > 3]
         return keywords[:10]  # Top 10 keywords
+
