@@ -465,4 +465,3 @@ class NewsAnalyzer:
         }
         keywords = [word for word in words if word not in stop_words and len(word) > 3]
         return keywords[:10]  # Top 10 keywords
-
