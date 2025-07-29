@@ -65,7 +65,7 @@ class NewsAnalyzer:
         # Palavras irrelevantes que podem gerar falsos positivos
         self.irrelevant_keywords = [
             'segurança', 'security', 'secure', 'assegurar', 'garantir',
-            'certeza', 'certo', 'insurance fraud' # fraude é relevante, mas pode ser muito específico
+            'certeza', 'certo'
         ]
         
         self.logger.info("NewsAnalyzer inicializado")
@@ -447,11 +447,22 @@ class NewsAnalyzer:
         return sorted_articles[:top_n]
     
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extrai palavras-chave do texto"""
+        """
+        Extrai palavras-chave do texto (método auxiliar)
+        
+        Args:
+            text: Texto para extrair palavras-chave
+            
+        Returns:
+            Lista de palavras-chave
+        """
         # Implementação básica de extração de keywords
         words = text.lower().split()
         # Filtrar palavras comuns
-        stop_words = {'o', 'a', 'de', 'da', 'do', 'e', 'em', 'para', 'com', 'por', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+        stop_words = {
+            'o', 'a', 'de', 'da', 'do', 'e', 'em', 'para', 'com', 'por', 'que', 'se', 'na', 'no',
+            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are'
+        }
         keywords = [word for word in words if word not in stop_words and len(word) > 3]
         return keywords[:10]  # Top 10 keywords
 
