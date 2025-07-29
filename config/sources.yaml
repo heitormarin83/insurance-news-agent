@@ -141,7 +141,10 @@ eua:
     source_type: "web_scraping"
     priority: "medium"
     update_frequency_hours: 4
-    enabled: true
+    enabled: false  # Desabilitado temporariamente - Erro 403 persistente (proteção anti-bot)
+    disable_reason: "403 Forbidden - Site bloqueia scrapers automatizados"
+    disable_date: "2025-07-29"
+    review_date: "2025-10-29"  # Revisar em 3 meses
 
   insurance_thought_leadership:
     name: "Insurance Thought Leadership"
