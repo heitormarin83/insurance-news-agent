@@ -23,17 +23,17 @@ class NewsAnalyzer:
         Args:
             config_path: Caminho para arquivo de configuração
         """
-        self.config_loader = ConfigLoader(config_path)
-        self.config = self.config_loader.load_config()
+        self.config_loader = ConfigLoader()
+        self.config = self.config_loader.load_sources_config()
         
         # Configurações de relevância
-        self.relevance_config = self.config.get('relevance_filters', {})
+        self.relevance_config = self.config_loader.get_relevance_filters()
         self.open_insurance_keywords = self.relevance_config.get('open_insurance_keywords', [])
         self.high_priority_keywords = self.relevance_config.get('high_priority_keywords', [])
         self.insurance_keywords = self.relevance_config.get('insurance_keywords', [])
         
         # Configurações globais
-        global_settings = self.config.get('global_settings', {})
+        global_settings = self.config_loader.get_global_settings()
         self.max_articles_per_source = global_settings.get('max_articles_per_source', 50)
         self.max_age_days = global_settings.get('max_age_days', 7)
         
