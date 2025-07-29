@@ -1,5 +1,5 @@
 """
-Analisador de notícias de seguros com IA
+Analisador de notícias de seguros
 Responsável por analisar, classificar e filtrar artigos de notícias
 """
 
@@ -8,7 +8,6 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict, Counter
-import openai
 from ..models import NewsArticle
 from ..utils.config_loader import ConfigLoader
 
@@ -37,9 +36,6 @@ class NewsAnalyzer:
         global_settings = self.config.get('global_settings', {})
         self.max_articles_per_source = global_settings.get('max_articles_per_source', 50)
         self.max_age_days = global_settings.get('max_age_days', 7)
-        
-        # Cliente OpenAI para análise avançada
-        self.openai_client = openai.OpenAI()
         
         logger.info("NewsAnalyzer inicializado")
     
@@ -83,7 +79,7 @@ class NewsAnalyzer:
         # Análise de tópicos em alta
         trending_topics = self.get_trending_topics(articles)
         
-        # Análise de sentimento
+        # Análise de sentimento (simplificada sem OpenAI)
         sentiment_analysis = self._analyze_sentiment_distribution(articles)
         
         # Análise de palavras-chave
@@ -182,7 +178,7 @@ class NewsAnalyzer:
     
     def analyze_sentiment(self, article: NewsArticle) -> str:
         """
-        Analisa o sentimento de um artigo usando IA
+        Analisa o sentimento de um artigo usando análise simples baseada em palavras-chave
         
         Args:
             article: Artigo para análise
@@ -190,28 +186,30 @@ class NewsAnalyzer:
         Returns:
             Sentimento: 'positive', 'negative', 'neutral'
         """
-        try:
-            prompt = f"""
-            Analise o sentimento da seguinte notícia sobre seguros e classifique como 'positive', 'negative' ou 'neutral':
-            
-            Título: {article.title}
-            Resumo: {article.summary}
-            
-            Responda apenas com uma palavra: positive, negative ou neutral.
-            """
-            
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0.1
-            )
-            
-            sentiment = response.choices[0].message.content.strip().lower()
-            return sentiment if sentiment in ['positive', 'negative', 'neutral'] else 'neutral'
-            
-        except Exception as e:
-            logger.warning(f"Erro na análise de sentimento: {e}")
+        text_content = f"{article.title} {article.summary}".lower()
+        
+        # Palavras-chave positivas
+        positive_keywords = [
+            'crescimento', 'aumento', 'expansão', 'sucesso', 'melhoria', 'inovação',
+            'oportunidade', 'benefício', 'vantagem', 'progresso', 'desenvolvimento',
+            'lucro', 'ganho', 'positivo', 'otimista', 'forte', 'sólido'
+        ]
+        
+        # Palavras-chave negativas
+        negative_keywords = [
+            'queda', 'redução', 'perda', 'prejuízo', 'crise', 'problema',
+            'dificuldade', 'risco', 'ameaça', 'declínio', 'negativo',
+            'fraude', 'golpe', 'falência', 'demissão', 'corte'
+        ]
+        
+        positive_count = sum(1 for keyword in positive_keywords if keyword in text_content)
+        negative_count = sum(1 for keyword in negative_keywords if keyword in text_content)
+        
+        if positive_count > negative_count:
+            return 'positive'
+        elif negative_count > positive_count:
+            return 'negative'
+        else:
             return 'neutral'
     
     def extract_keywords(self, articles: List[NewsArticle], top_n: int = 10) -> List[Tuple[str, int]]:
@@ -443,14 +441,11 @@ class NewsAnalyzer:
         return dict(sources_data)
     
     def _analyze_sentiment_distribution(self, articles: List[NewsArticle]) -> Dict[str, int]:
-        """Analisa distribuição de sentimentos"""
+        """Analisa distribuição de sentimentos usando análise simples"""
         sentiment_counts = {'positive': 0, 'negative': 0, 'neutral': 0}
         
-        # Para performance, analisa apenas uma amostra
-        sample_size = min(20, len(articles))
-        sample_articles = articles[:sample_size]
-        
-        for article in sample_articles:
+        # Analisa todos os artigos com método simplificado
+        for article in articles:
             sentiment = self.analyze_sentiment(article)
             sentiment_counts[sentiment] += 1
         
