@@ -7,9 +7,13 @@ logging:
   log_retention_days: 30
   save_email_logs: true
 recipients:
-  alerts: []
-  daily_report: []
-  errors: []
+  daily_report:
+    - "heitor.a.marin@gmail.com"
+    - "heitor.a.marin@gmail.com.br"
+  alerts:
+    - "heitor.a.marin@gmail.com"
+  errors:
+    - "heitor.a.marin@gmail.com"
 retry:
   delay_between_attempts: 60
   max_attempts: 3
