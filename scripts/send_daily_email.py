@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Script para envio do relatório diário por e-mail
+VERSÃO CORRIGIDA - NOME DO ARQUIVO CORRETO
 """
 
 import sys
@@ -22,7 +23,8 @@ def load_daily_report() -> DailyReport:
     """Carrega relatório diário do arquivo JSON"""
     
     date_str = datetime.now().strftime('%Y-%m-%d')
-    report_path = Path(f'data/reports/relatorio_seguros_{date_str}.json')
+    # CORREÇÃO: Nome correto do arquivo
+    report_path = Path(f'data/reports/daily_report_{date_str}.json')
     
     if not report_path.exists():
         raise FileNotFoundError(f"Relatório não encontrado: {report_path}")
@@ -33,31 +35,64 @@ def load_daily_report() -> DailyReport:
     # Converte artigos de volta para objetos NewsArticle
     top_articles = []
     for article_data in data.get('top_articles', []):
+        # Trata casos onde alguns campos podem não existir
+        region_value = article_data.get('region', 'Brasil')
+        if isinstance(region_value, str):
+            # Se já é string, usa diretamente
+            region = region_value
+        else:
+            # Se é um objeto, tenta extrair o valor
+            region = region_value if region_value else 'Brasil'
+        
+        date_published = article_data.get('date_published')
+        if date_published:
+            try:
+                date_published = datetime.fromisoformat(date_published)
+            except:
+                date_published = datetime.now()
+        else:
+            date_published = datetime.now()
+        
         article = NewsArticle(
             title=article_data['title'],
             url=article_data['url'],
             source=article_data['source'],
-            region=Region(article_data['region']),
-            date_published=datetime.fromisoformat(article_data['date_published']),
-            summary=article_data['summary'],
-            categories=article_data['categories'],
-            relevance_score=article_data['relevance_score'],
-            open_insurance_related=article_data['open_insurance_related']
+            region=region,
+            date_published=date_published,
+            summary=article_data.get('summary', ''),
+            categories=article_data.get('categories', []),
+            relevance_score=article_data.get('relevance_score', 0.5),
+            open_insurance_related=article_data.get('open_insurance_related', False)
         )
         top_articles.append(article)
     
     # Converte artigos Open Insurance
     open_insurance_articles = []
     for article_data in data.get('open_insurance_articles', []):
+        region_value = article_data.get('region', 'Brasil')
+        if isinstance(region_value, str):
+            region = region_value
+        else:
+            region = region_value if region_value else 'Brasil'
+        
+        date_published = article_data.get('date_published')
+        if date_published:
+            try:
+                date_published = datetime.fromisoformat(date_published)
+            except:
+                date_published = datetime.now()
+        else:
+            date_published = datetime.now()
+        
         article = NewsArticle(
             title=article_data['title'],
             url=article_data['url'],
             source=article_data['source'],
-            region=Region(article_data['region']),
-            date_published=datetime.fromisoformat(article_data['date_published']),
-            summary=article_data['summary'],
-            categories=article_data['categories'],
-            relevance_score=article_data['relevance_score'],
+            region=region,
+            date_published=date_published,
+            summary=article_data.get('summary', ''),
+            categories=article_data.get('categories', []),
+            relevance_score=article_data.get('relevance_score', 0.5),
             open_insurance_related=True
         )
         open_insurance_articles.append(article)
@@ -66,10 +101,10 @@ def load_daily_report() -> DailyReport:
     report = DailyReport(
         date=datetime.fromisoformat(data['date']),
         total_articles=data['total_articles'],
-        articles_by_region=data['articles_by_region'],
+        articles_by_region=data.get('articles_by_region', {}),
         top_articles=top_articles,
         open_insurance_articles=open_insurance_articles,
-        summary=data['summary']
+        summary=data.get('summary', 'Relatório diário de notícias de seguros.')
     )
     
     return report
@@ -145,4 +180,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
