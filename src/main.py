@@ -1,5 +1,6 @@
 """
 Sistema principal do Insurance News Agent
+VERSÃO COM DEDUPLICAÇÃO INTEGRADA
 """
 
 import asyncio
@@ -12,6 +13,12 @@ from src.scrapers import ScraperFactory
 from src.analyzers import NewsAnalyzer, ReportGenerator
 from src.utils.config_loader import config_loader
 from src.utils.logger import get_logger
+
+# Importa o sistema de deduplicação
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+from deduplication_manager import DeduplicationManager
 
 logger = get_logger("main")
 
@@ -26,11 +33,14 @@ class InsuranceNewsAgent:
         self.analyzer = NewsAnalyzer()
         self.report_generator = ReportGenerator()
         
-        logger.info("Insurance News Agent inicializado")
+        # Inicializa sistema de deduplicação
+        self.deduplication_manager = DeduplicationManager()
+        
+        logger.info("Insurance News Agent inicializado com sistema de deduplicação")
     
     def run_daily_collection(self) -> Dict[str, Any]:
         """
-        Executa coleta diária de notícias
+        Executa coleta diária de notícias COM DEDUPLICAÇÃO
         
         Returns:
             Resultado da coleta e processamento
@@ -38,6 +48,9 @@ class InsuranceNewsAgent:
         start_time = time.time()
         
         logger.info("🚀 Iniciando coleta diária de notícias de seguros")
+        
+        # Limpeza automática do histórico (mantém 30 dias)
+        self.deduplication_manager.cleanup_old_entries(days_to_keep=30)
         
         # Coleta notícias de todas as fontes
         all_articles = []
@@ -51,16 +64,8 @@ class InsuranceNewsAgent:
             try:
                 logger.info(f"🔍 Processando fonte: {source_name}")
                 
-                # Cria scraper apropriado
+                # Cria scraper para a fonte
                 scraper = ScraperFactory.create_scraper(source_config)
-                
-                if not scraper:
-                    logger.warning(f"❌ Não foi possível criar scraper para {source_name}")
-                    continue
-                
-                if not scraper.is_enabled():
-                    logger.info(f"⏭️ Fonte desabilitada: {source_name}")
-                    continue
                 
                 # Executa scraping
                 result = scraper.scrape()
@@ -80,17 +85,34 @@ class InsuranceNewsAgent:
                 logger.error(f"💥 Erro ao processar fonte {source_name}: {e}")
                 continue
         
+        logger.info(f"📊 Total coletado: {len(all_articles)} artigos de {len(scraping_results)} fontes")
+        
+        # APLICAR DEDUPLICAÇÃO
+        logger.info("🔍 Aplicando filtro de deduplicação...")
+        unique_articles = self.deduplication_manager.filter_duplicates(all_articles)
+        
+        if len(unique_articles) < len(all_articles):
+            duplicates_removed = len(all_articles) - len(unique_articles)
+            logger.info(f"🗑️ Removidos {duplicates_removed} artigos duplicados")
+        
         # Análise e geração de relatório
-        logger.info(f"📊 Analisando {len(all_articles)} artigos coletados")
+        logger.info(f"📊 Analisando {len(unique_articles)} artigos únicos")
         
         # Gera relatório diário
-        daily_report = self.report_generator.generate_daily_report(all_articles)
+        daily_report = self.report_generator.generate_daily_report(unique_articles)
         
         # Salva relatório
         html_path = self.report_generator.save_report(daily_report, format='html')
         json_path = self.report_generator.save_report(daily_report, format='json')
         
+        # MARCA ARTIGOS COMO ENVIADOS
+        logger.info("📝 Marcando artigos como enviados no histórico...")
+        self.deduplication_manager.mark_as_sent(unique_articles)
+        
         execution_time = time.time() - start_time
+        
+        # Estatísticas de deduplicação
+        dedup_stats = self.deduplication_manager.get_statistics()
         
         # Resultado final
         result = {
@@ -99,19 +121,70 @@ class InsuranceNewsAgent:
             'total_sources_processed': len(scraping_results),
             'successful_sources': sum(1 for r in scraping_results if r.success),
             'total_articles_collected': len(all_articles),
+            'unique_articles_after_dedup': len(unique_articles),
+            'duplicates_removed': len(all_articles) - len(unique_articles),
             'top_articles_count': len(daily_report.top_articles),
-            'open_insurance_articles_count': len(daily_report.open_insurance_articles),
-            'report_html_path': html_path,
-            'report_json_path': json_path,
-            'daily_report': daily_report,
-            'scraping_results': scraping_results
+            'other_articles_count': len(getattr(daily_report, 'other_articles', [])),
+            'open_insurance_count': len(daily_report.open_insurance_articles),
+            'html_report_path': html_path,
+            'json_report_path': json_path,
+            'deduplication_stats': dedup_stats
         }
         
         logger.info(f"🎉 Coleta diária concluída em {execution_time:.2f}s")
-        logger.info(f"📈 Estatísticas: {result['successful_sources']}/{result['total_sources_processed']} "
-                   f"fontes bem-sucedidas, {result['total_articles_collected']} artigos coletados")
+        logger.info(f"📈 Estatísticas: {result['successful_sources']}/{result['total_sources_processed']} fontes bem-sucedidas, "
+                   f"{result['unique_articles_after_dedup']} artigos únicos")
         
         return result
+    
+    def collect_from_source(self, source_name: str) -> ScrapingResult:
+        """
+        Coleta notícias de uma fonte específica
+        
+        Args:
+            source_name: Nome da fonte para coletar
+            
+        Returns:
+            Resultado da coleta
+        """
+        logger.info(f"🎯 Coletando de fonte específica: {source_name}")
+        
+        enabled_sources = config_loader.get_enabled_sources()
+        
+        if source_name not in enabled_sources:
+            error_msg = f"Fonte '{source_name}' não encontrada ou não habilitada"
+            logger.error(error_msg)
+            return ScrapingResult(
+                source=source_name,
+                success=False,
+                articles_found=0,
+                error_message=error_msg
+            )
+        
+        try:
+            source_config = enabled_sources[source_name]
+            scraper = ScraperFactory.create_scraper(source_config)
+            result = scraper.scrape()
+            
+            if result.success:
+                logger.info(f"✅ {source_name}: {result.articles_found} artigos coletados")
+                
+                # Aplica deduplicação também para fonte específica
+                unique_articles = self.deduplication_manager.filter_duplicates(result.articles)
+                result.articles = unique_articles
+                result.articles_found = len(unique_articles)
+                
+            return result
+            
+        except Exception as e:
+            error_msg = f"Erro ao coletar de {source_name}: {e}"
+            logger.error(error_msg)
+            return ScrapingResult(
+                source=source_name,
+                success=False,
+                articles_found=0,
+                error_message=error_msg
+            )
     
     def test_sources(self) -> Dict[str, Any]:
         """
@@ -129,130 +202,72 @@ class InsuranceNewsAgent:
             try:
                 logger.info(f"🔍 Testando fonte: {source_name}")
                 
-                # Cria scraper
                 scraper = ScraperFactory.create_scraper(source_config)
+                result = scraper.scrape()
                 
-                if not scraper:
-                    test_results[source_name] = {
-                        'success': False,
-                        'error': 'Não foi possível criar scraper'
-                    }
-                    continue
+                test_results[source_name] = {
+                    'success': result.success,
+                    'articles_found': result.articles_found,
+                    'execution_time': result.execution_time,
+                    'error_message': result.error_message if not result.success else None
+                }
                 
-                # Testa conexão básica
-                start_time = time.time()
-                response = scraper._make_request(scraper.url)
-                test_time = time.time() - start_time
-                
-                if response:
-                    test_results[source_name] = {
-                        'success': True,
-                        'status_code': response.status_code,
-                        'response_time': round(test_time, 2),
-                        'content_length': len(response.content),
-                        'source_type': source_config.get('source_type'),
-                        'region': source_config.get('region')
-                    }
-                    logger.info(f"✅ {source_name}: OK ({response.status_code}) em {test_time:.2f}s")
+                if result.success:
+                    logger.info(f"✅ {source_name}: {result.articles_found} artigos")
                 else:
-                    test_results[source_name] = {
-                        'success': False,
-                        'error': 'Falha na requisição HTTP'
-                    }
-                    logger.warning(f"❌ {source_name}: Falha na conexão")
+                    logger.error(f"❌ {source_name}: {result.error_message}")
+                
+                # Delay entre testes
+                time.sleep(1)
                 
             except Exception as e:
+                logger.error(f"💥 Erro ao testar {source_name}: {e}")
                 test_results[source_name] = {
                     'success': False,
-                    'error': str(e)
+                    'articles_found': 0,
+                    'execution_time': 0,
+                    'error_message': str(e)
                 }
-                logger.error(f"💥 {source_name}: {e}")
         
-        # Estatísticas dos testes
-        total_sources = len(test_results)
-        successful_sources = sum(1 for r in test_results.values() if r.get('success', False))
+        successful_sources = sum(1 for r in test_results.values() if r['success'])
         
-        summary = {
-            'total_sources': total_sources,
+        return {
+            'total_sources': len(test_results),
             'successful_sources': successful_sources,
-            'success_rate': (successful_sources / total_sources) * 100 if total_sources > 0 else 0,
-            'test_timestamp': datetime.now().isoformat(),
+            'success_rate': (successful_sources / len(test_results)) * 100 if test_results else 0,
             'results': test_results
         }
-        
-        logger.info(f"🧪 Testes concluídos: {successful_sources}/{total_sources} "
-                   f"fontes funcionando ({summary['success_rate']:.1f}%)")
-        
-        return summary
-    
-    def collect_from_source(self, source_name: str) -> ScrapingResult:
-        """
-        Coleta notícias de uma fonte específica
-        
-        Args:
-            source_name: Nome da fonte
-            
-        Returns:
-            Resultado do scraping
-        """
-        try:
-            source_config = config_loader.get_source_by_name(source_name)
-            
-            scraper = ScraperFactory.create_scraper(source_config)
-            
-            if not scraper:
-                return ScrapingResult(
-                    source=source_name,
-                    success=False,
-                    articles_found=0,
-                    error_message="Não foi possível criar scraper"
-                )
-            
-            logger.info(f"🔍 Coletando de fonte específica: {source_name}")
-            
-            result = scraper.scrape()
-            
-            if result.success:
-                logger.info(f"✅ {source_name}: {result.articles_found} artigos coletados")
-            else:
-                logger.error(f"❌ {source_name}: {result.error_message}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"💥 Erro ao coletar de {source_name}: {e}")
-            return ScrapingResult(
-                source=source_name,
-                success=False,
-                articles_found=0,
-                error_message=str(e)
-            )
     
     def get_statistics(self) -> Dict[str, Any]:
         """
-        Obtém estatísticas do sistema
+        Retorna estatísticas do sistema
         
         Returns:
             Estatísticas do sistema
         """
         enabled_sources = config_loader.get_enabled_sources()
         
-        # Conta fontes por região
+        # Estatísticas por região
         by_region = {}
-        by_type = {}
-        
-        for source_name, source_config in enabled_sources.items():
-            region = source_config.get('region', 'Unknown')
-            source_type = source_config.get('source_type', 'Unknown')
-            
+        for source_config in enabled_sources.values():
+            region = source_config.get('region', 'Não especificado')
             by_region[region] = by_region.get(region, 0) + 1
+        
+        # Estatísticas por tipo
+        by_type = {}
+        for source_config in enabled_sources.values():
+            source_type = source_config.get('source_type', 'Não especificado')
             by_type[source_type] = by_type.get(source_type, 0) + 1
+        
+        # Estatísticas de deduplicação
+        dedup_stats = self.deduplication_manager.get_statistics()
         
         return {
             'total_sources': len(enabled_sources),
             'sources_by_region': by_region,
             'sources_by_type': by_type,
             'global_settings': self.global_settings,
+            'deduplication_stats': dedup_stats,
             'system_timestamp': datetime.now().isoformat()
         }
 
@@ -276,7 +291,8 @@ def main():
             print(f"Resultado: {result.success}, Artigos: {result.articles_found}")
         else:
             result = agent.run_daily_collection()
-            print(f"Coleta concluída: {result['total_articles_collected']} artigos")
+            print(f"Coleta concluída: {result['unique_articles_after_dedup']} artigos únicos")
+            print(f"Duplicatas removidas: {result['duplicates_removed']}")
     
     elif args.action == 'test':
         result = agent.test_sources()
@@ -286,8 +302,8 @@ def main():
         stats = agent.get_statistics()
         print(f"Estatísticas: {stats['total_sources']} fontes configuradas")
         print(f"Por região: {stats['sources_by_region']}")
+        print(f"Deduplicação: {stats['deduplication_stats']['total_sent']} artigos no histórico")
 
 
 if __name__ == "__main__":
     main()
-
