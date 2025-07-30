@@ -1,7 +1,7 @@
 """
 Gerador de relatórios para o Insurance News Agent
 Responsável por criar relatórios diários em diferentes formatos
-VERSÃO COM CORREÇÃO JSON - SERIALIZAÇÃO DE ENUMS
+VERSÃO COMPLETA - COM DEDUPLICAÇÃO E SEÇÃO "OUTROS ARTIGOS"
 """
 
 import os
@@ -10,15 +10,15 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from ..models import NewsArticle, DailyReport
-from ..utils.logger import get_logger
+from src.models import NewsArticle, DailyReport
+from src.utils.logger import get_logger
 
 logger = get_logger("report_generator")
 
 class ReportGenerator:
     """
     Gerador de relatórios diários
-    VERSÃO COM CORREÇÃO JSON - ENUMS SERIALIZÁVEIS
+    VERSÃO COMPLETA - COM DEDUPLICAÇÃO E TODOS OS ARTIGOS
     """
     
     def __init__(self, output_dir: str = "data/reports"):
@@ -39,7 +39,7 @@ class ReportGenerator:
         Gera relatório diário
         
         Args:
-            articles: Lista de artigos
+            articles: Lista de artigos (já filtrados por deduplicação)
             analysis: Análise dos artigos (opcional)
             
         Returns:
@@ -54,6 +54,9 @@ class ReportGenerator:
         # Seleciona artigos principais (top 15)
         top_articles = self._select_top_articles(articles, 15)
         
+        # Artigos restantes (outros artigos)
+        other_articles = [art for art in articles if art not in top_articles]
+        
         # Identifica artigos de Open Insurance
         open_insurance_articles = [art for art in articles if getattr(art, 'is_open_insurance', False) or getattr(art, 'open_insurance_related', False)]
         
@@ -63,7 +66,7 @@ class ReportGenerator:
         # Gera resumo
         summary = self._generate_summary(articles, articles_by_region, open_insurance_articles)
         
-        # Cria relatório COMPATÍVEL com o modelo
+        # Cria relatório EXPANDIDO
         report = DailyReport(
             date=datetime.now(),
             total_articles=len(articles),
@@ -73,13 +76,17 @@ class ReportGenerator:
             summary=summary
         )
         
-        self.logger.info(f"Relatório diário gerado: {len(top_articles)} artigos principais, {len(open_insurance_articles)} sobre Open Insurance")
+        # Adiciona campo personalizado para outros artigos
+        report.other_articles = other_articles
+        
+        self.logger.info(f"Relatório diário gerado: {len(top_articles)} artigos principais, "
+                        f"{len(other_articles)} outros artigos, {len(open_insurance_articles)} sobre Open Insurance")
         
         return report
     
     def _create_empty_report(self) -> DailyReport:
         """Cria relatório vazio"""
-        return DailyReport(
+        report = DailyReport(
             date=datetime.now(),
             total_articles=0,
             top_articles=[],
@@ -87,6 +94,8 @@ class ReportGenerator:
             articles_by_region={},
             summary="Nenhum artigo foi coletado hoje."
         )
+        report.other_articles = []
+        return report
     
     def _select_top_articles(self, articles: List[NewsArticle], limit: int = 15) -> List[NewsArticle]:
         """Seleciona os principais artigos"""
@@ -162,24 +171,13 @@ class ReportGenerator:
         else:
             return obj
     
-    def generate_html_report(self, report: DailyReport) -> str:
-        """
-        Gera relatório em formato HTML
-        VERSÃO COMPATÍVEL - SEM ERROS DE TEMPLATE
+    def _generate_articles_html(self, articles: List[NewsArticle], css_class: str = "article") -> str:
+        """Gera HTML para uma lista de artigos"""
+        if not articles:
+            return "<p>Nenhum artigo nesta categoria.</p>"
         
-        Args:
-            report: Relatório diário
-            
-        Returns:
-            HTML do relatório
-        """
-        # Prepara dados
-        date_str = report.date.strftime('%d de %B de %Y')
-        generation_time = datetime.now().strftime('%d/%m/%Y às %H:%M')
-        
-        # Gera HTML dos artigos principais
-        top_articles_html = ""
-        for i, article in enumerate(report.top_articles, 1):
+        articles_html = ""
+        for i, article in enumerate(articles, 1):
             # Categorias (se existirem)
             categories = getattr(article, 'categories', [])
             categories_html = "".join([f'<span class="badge">{cat}</span>' for cat in categories])
@@ -192,9 +190,13 @@ class ReportGenerator:
             if hasattr(region, 'value'):
                 region = region.value
             
-            top_articles_html += f"""
-            <div class="article">
-                <h3><a href="{article.url}" target="_blank">{article.title}</a></h3>
+            # Score de relevância
+            relevance_score = getattr(article, 'relevance_score', 0)
+            score_display = f"({relevance_score:.1f})" if relevance_score > 0 else ""
+            
+            articles_html += f"""
+            <div class="{css_class}">
+                <h3><a href="{article.url}" target="_blank">{article.title}</a> {score_display}</h3>
                 <div class="article-meta">
                     <strong>Fonte:</strong> {source} | 
                     <strong>Data:</strong> {date_pub} | 
@@ -205,24 +207,34 @@ class ReportGenerator:
             </div>
             """
         
+        return articles_html
+    
+    def generate_html_report(self, report: DailyReport) -> str:
+        """
+        Gera relatório em formato HTML
+        VERSÃO COMPLETA - COM SEÇÃO "OUTROS ARTIGOS"
+        
+        Args:
+            report: Relatório diário
+            
+        Returns:
+            HTML do relatório
+        """
+        # Prepara dados
+        date_str = report.date.strftime('%d de %B de %Y')
+        generation_time = datetime.now().strftime('%d/%m/%Y às %H:%M')
+        
+        # Gera HTML dos artigos principais
+        top_articles_html = self._generate_articles_html(report.top_articles, "article top-article")
+        
+        # Gera HTML dos outros artigos
+        other_articles = getattr(report, 'other_articles', [])
+        other_articles_html = self._generate_articles_html(other_articles, "article other-article")
+        
         # Gera HTML dos artigos Open Insurance
         open_insurance_html = ""
         if report.open_insurance_articles:
-            for article in report.open_insurance_articles:
-                source = article.source
-                date_pub = article.date_published.strftime('%d/%m/%Y') if hasattr(article, 'date_published') and article.date_published else 'Data não disponível'
-                
-                open_insurance_html += f"""
-                <div class="article open-insurance">
-                    <h3><a href="{article.url}" target="_blank">{article.title}</a></h3>
-                    <div class="article-meta">
-                        <span class="badge">Open Insurance</span>
-                        <strong>Fonte:</strong> {source} | 
-                        <strong>Data:</strong> {date_pub}
-                    </div>
-                    <div class="article-summary">{article.summary}</div>
-                </div>
-                """
+            open_insurance_html = self._generate_articles_html(report.open_insurance_articles, "article open-insurance")
         else:
             open_insurance_html = "<p>Nenhum artigo específico sobre Open Insurance foi identificado hoje.</p>"
         
@@ -234,7 +246,18 @@ class ReportGenerator:
         </div>
         """
         
-        # Template HTML CORRIGIDO (sem chaves problemáticas)
+        # Seção Outros Artigos
+        other_articles_section = ""
+        if other_articles:
+            other_articles_section = f"""
+            <div class="section">
+                <h2>📰 Outros Artigos ({len(other_articles)})</h2>
+                <p class="section-description">Todos os demais artigos coletados, ordenados por relevância.</p>
+                {other_articles_html}
+            </div>
+            """
+        
+        # Template HTML COMPLETO
         html_content = f"""
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -283,7 +306,7 @@ class ReportGenerator:
         }}
         .stats {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }}
@@ -316,12 +339,29 @@ class ReportGenerator:
             padding-bottom: 10px;
             margin-bottom: 20px;
         }}
+        .section-description {{
+            color: #666;
+            font-style: italic;
+            margin-bottom: 20px;
+        }}
         .article {{
             border-left: 4px solid #667eea;
             padding: 15px;
             margin-bottom: 20px;
             background: #f8f9ff;
             border-radius: 0 5px 5px 0;
+        }}
+        .top-article {{
+            border-left-color: #28a745;
+            background: #f8fff8;
+        }}
+        .other-article {{
+            border-left-color: #6c757d;
+            background: #f8f9fa;
+        }}
+        .open-insurance {{
+            border-left-color: #e74c3c;
+            background: #fff8f8;
         }}
         .article h3 {{
             margin: 0 0 10px 0;
@@ -352,9 +392,6 @@ class ReportGenerator:
             font-size: 0.8em;
             margin-right: 5px;
         }}
-        .open-insurance {{
-            border-left-color: #e74c3c;
-        }}
         .open-insurance .badge {{
             background: #e74c3c;
         }}
@@ -364,6 +401,31 @@ class ReportGenerator:
             margin-top: 40px;
             padding: 20px;
         }}
+        .toc {{
+            background: #f8f9ff;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border: 1px solid #e1e5f2;
+        }}
+        .toc h3 {{
+            color: #667eea;
+            margin-top: 0;
+        }}
+        .toc ul {{
+            list-style: none;
+            padding: 0;
+        }}
+        .toc li {{
+            padding: 5px 0;
+        }}
+        .toc a {{
+            color: #667eea;
+            text-decoration: none;
+        }}
+        .toc a:hover {{
+            text-decoration: underline;
+        }}
     </style>
 </head>
 <body>
@@ -372,12 +434,23 @@ class ReportGenerator:
         <div class="date">Notícias do Mercado de Seguros - {date_str}</div>
     </div>
     
-    <div class="summary">
+    <div class="toc">
+        <h3>📋 Índice</h3>
+        <ul>
+            <li><a href="#resumo">📋 Resumo Executivo</a></li>
+            <li><a href="#estatisticas">📊 Estatísticas</a></li>
+            <li><a href="#open-insurance">🔓 Open Insurance ({len(report.open_insurance_articles)})</a></li>
+            <li><a href="#principais">🏆 Principais Notícias ({len(report.top_articles)})</a></li>
+            {f'<li><a href="#outros">📰 Outros Artigos ({len(other_articles)})</a></li>' if other_articles else ''}
+        </ul>
+    </div>
+    
+    <div id="resumo" class="summary">
         <h2>📋 Resumo Executivo</h2>
         <p>{report.summary}</p>
     </div>
     
-    <div class="stats">
+    <div id="estatisticas" class="stats">
         <div class="stat-card">
             <div class="stat-number">{report.total_articles}</div>
             <div class="stat-label">Total de Artigos</div>
@@ -385,6 +458,10 @@ class ReportGenerator:
         <div class="stat-card">
             <div class="stat-number">{len(report.top_articles)}</div>
             <div class="stat-label">Artigos Principais</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{len(other_articles)}</div>
+            <div class="stat-label">Outros Artigos</div>
         </div>
         <div class="stat-card">
             <div class="stat-number">{len(report.open_insurance_articles)}</div>
@@ -396,16 +473,24 @@ class ReportGenerator:
         </div>
     </div>
     
-    {open_insurance_section}
+    <div id="open-insurance">
+        {open_insurance_section}
+    </div>
     
-    <div class="section">
-        <h2>🏆 Principais Notícias</h2>
+    <div id="principais" class="section">
+        <h2>🏆 Principais Notícias ({len(report.top_articles)})</h2>
+        <p class="section-description">Os 15 artigos mais relevantes do dia, ordenados por score de relevância.</p>
         {top_articles_html}
+    </div>
+    
+    <div id="outros">
+        {other_articles_section}
     </div>
     
     <div class="footer">
         <p>Relatório gerado automaticamente pelo Insurance News Agent</p>
         <p>Gerado em: {generation_time}</p>
+        <p>Sistema de deduplicação ativo - artigos únicos apenas</p>
     </div>
 </body>
 </html>
@@ -442,7 +527,9 @@ class ReportGenerator:
             filename = f"daily_report_{date_str}.json"
             filepath = self.output_dir / filename
             
-            # Converte para dict serializável COM CORREÇÃO DE ENUMS
+            # Converte para dict serializável COM OUTROS ARTIGOS
+            other_articles = getattr(report, 'other_articles', [])
+            
             report_dict = {
                 'date': report.date.isoformat(),
                 'total_articles': report.total_articles,
@@ -454,10 +541,22 @@ class ReportGenerator:
                         'source': art.source,
                         'summary': art.summary,
                         'date_published': art.date_published.isoformat() if hasattr(art, 'date_published') and art.date_published else None,
-                        'region': self._convert_to_serializable(getattr(art, 'region', None)),  # CORREÇÃO ENUM
+                        'region': self._convert_to_serializable(getattr(art, 'region', None)),
                         'relevance_score': getattr(art, 'relevance_score', None)
                     }
                     for art in report.top_articles
+                ],
+                'other_articles': [
+                    {
+                        'title': art.title,
+                        'url': art.url,
+                        'source': art.source,
+                        'summary': art.summary,
+                        'date_published': art.date_published.isoformat() if hasattr(art, 'date_published') and art.date_published else None,
+                        'region': self._convert_to_serializable(getattr(art, 'region', None)),
+                        'relevance_score': getattr(art, 'relevance_score', None)
+                    }
+                    for art in other_articles
                 ],
                 'open_insurance_articles': [
                     {
@@ -465,7 +564,7 @@ class ReportGenerator:
                         'url': art.url,
                         'source': art.source,
                         'summary': art.summary,
-                        'region': self._convert_to_serializable(getattr(art, 'region', None))  # CORREÇÃO ENUM
+                        'region': self._convert_to_serializable(getattr(art, 'region', None))
                     }
                     for art in report.open_insurance_articles
                 ],
