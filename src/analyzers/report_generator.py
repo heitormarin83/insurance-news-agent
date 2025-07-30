@@ -1,7 +1,7 @@
 """
 Gerador de relatórios para o Insurance News Agent
 Responsável por criar relatórios diários em diferentes formatos
-VERSÃO COMPATÍVEL COM MODELO DAILYREPORT
+VERSÃO COM CORREÇÃO JSON - SERIALIZAÇÃO DE ENUMS
 """
 
 import os
@@ -18,7 +18,7 @@ logger = get_logger("report_generator")
 class ReportGenerator:
     """
     Gerador de relatórios diários
-    VERSÃO COMPATÍVEL - SEM CAMPOS EXTRAS
+    VERSÃO COM CORREÇÃO JSON - ENUMS SERIALIZÁVEIS
     """
     
     def __init__(self, output_dir: str = "data/reports"):
@@ -143,6 +143,24 @@ class ReportGenerator:
         summary_parts.append("100% dos artigos são das últimas 48 horas.")
         
         return " ".join(summary_parts)
+    
+    def _convert_to_serializable(self, obj):
+        """Converte objetos para formato serializável JSON"""
+        if hasattr(obj, 'value'):  # Enum
+            return obj.value
+        elif hasattr(obj, 'isoformat'):  # datetime
+            return obj.isoformat()
+        elif hasattr(obj, '__dict__'):  # Objeto customizado
+            result = {}
+            for key, value in obj.__dict__.items():
+                result[key] = self._convert_to_serializable(value)
+            return result
+        elif isinstance(obj, list):
+            return [self._convert_to_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: self._convert_to_serializable(value) for key, value in obj.items()}
+        else:
+            return obj
     
     def generate_html_report(self, report: DailyReport) -> str:
         """
@@ -424,7 +442,7 @@ class ReportGenerator:
             filename = f"daily_report_{date_str}.json"
             filepath = self.output_dir / filename
             
-            # Converte para dict serializável
+            # Converte para dict serializável COM CORREÇÃO DE ENUMS
             report_dict = {
                 'date': report.date.isoformat(),
                 'total_articles': report.total_articles,
@@ -436,7 +454,7 @@ class ReportGenerator:
                         'source': art.source,
                         'summary': art.summary,
                         'date_published': art.date_published.isoformat() if hasattr(art, 'date_published') and art.date_published else None,
-                        'region': getattr(art, 'region', None),
+                        'region': self._convert_to_serializable(getattr(art, 'region', None)),  # CORREÇÃO ENUM
                         'relevance_score': getattr(art, 'relevance_score', None)
                     }
                     for art in report.top_articles
@@ -446,7 +464,8 @@ class ReportGenerator:
                         'title': art.title,
                         'url': art.url,
                         'source': art.source,
-                        'summary': art.summary
+                        'summary': art.summary,
+                        'region': self._convert_to_serializable(getattr(art, 'region', None))  # CORREÇÃO ENUM
                     }
                     for art in report.open_insurance_articles
                 ],
