@@ -1,9 +1,15 @@
 """
-Módulo de envio de e-mails para o sistema de notícias de seguros
+Email Sender Package
+VERSÃO CORRIGIDA - Remove importação do gmail_sender que não existe
 """
 
-from .gmail_sender import GmailSender
+from .email_manager import EmailManager
 from .email_template import EmailTemplate
 
-__all__ = ['GmailSender', 'EmailTemplate']
+# Remove a importação problemática do gmail_sender
+# from .gmail_sender import GmailSender  # ← REMOVIDO
 
+__all__ = [
+    'EmailManager',
+    'EmailTemplate'
+]
