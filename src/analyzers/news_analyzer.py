@@ -1,352 +1,337 @@
 """
-Analisador de notícias de seguros
-Responsável por analisar, classificar e filtrar artigos de notícias
+Analisador de notícias para o Insurance News Agent
+Responsável por análise de relevância, classificação e processamento de artigos
 """
 
-import logging
 import re
-import yaml
-import os
+import nltk
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple
-from collections import defaultdict, Counter
-from pathlib import Path
-from ..models import NewsArticle
+from textblob import TextBlob
 
-logger = logging.getLogger(__name__)
+from ..models import NewsArticle
+from ..utils.logger import get_logger
+
+# Download de recursos NLTK necessários
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords', quiet=True)
 
 class NewsAnalyzer:
-    """Analisador inteligente de notícias de seguros"""
+    """
+    Analisador de notícias especializado em seguros
+    """
     
-    def __init__(self, config_path: str = "config/sources.yaml"):
-        """
-        Inicializa o analisador de notícias
+    def __init__(self):
+        self.logger = get_logger("news_analyzer")
         
-        Args:
-            config_path: Caminho para arquivo de configuração
-        """
-        # Carrega configuração diretamente para evitar problemas com ConfigLoader
-        self.config = self._load_config_direct()
-        
-        # Configurações de relevância
-        self.relevance_config = self.config.get('relevance_filters', {})
-        self.open_insurance_keywords = self.relevance_config.get('open_insurance_keywords', [])
-        self.high_priority_keywords = self.relevance_config.get('high_priority_keywords', [])
-        self.insurance_keywords = self.relevance_config.get('insurance_keywords', [])
-        
-        # Configurações globais
-        global_settings = self.config.get('global_settings', {})
-        self.max_articles_per_source = global_settings.get('max_articles_per_source', 50)
-        self.max_age_days = global_settings.get('max_age_days', 7)
-        
-        logger.info("NewsAnalyzer inicializado")
-    
-    def _load_config_direct(self) -> Dict[str, Any]:
-        """
-        Carrega configuração diretamente do arquivo YAML
-        Método à prova de falhas que não depende do ConfigLoader
-        """
-        try:
-            # Tenta encontrar o arquivo de configuração
-            config_paths = [
-                "config/sources.yaml",
-                "/app/config/sources.yaml",
-                Path(__file__).parent.parent.parent / "config" / "sources.yaml"
+        # Palavras-chave relacionadas a seguros (português e inglês)
+        self.insurance_keywords = {
+            'pt': [
+                'seguro', 'seguros', 'seguradora', 'seguradoras', 'apólice', 'apólices',
+                'prêmio', 'prêmios', 'sinistro', 'sinistros', 'indenização', 'resseguro',
+                'corretora', 'corretor', 'susep', 'cnseg', 'fenaseg', 'bradesco seguros',
+                'porto seguro', 'itaú seguros', 'zurich', 'allianz', 'mapfre',
+                'seguro auto', 'seguro vida', 'seguro saúde', 'seguro residencial',
+                'seguro empresarial', 'previdência', 'capitalização'
+            ],
+            'en': [
+                'insurance', 'insurer', 'insurers', 'policy', 'policies', 'premium',
+                'premiums', 'claim', 'claims', 'coverage', 'reinsurance', 'broker',
+                'underwriting', 'actuarial', 'risk management', 'life insurance',
+                'health insurance', 'auto insurance', 'property insurance',
+                'casualty insurance', 'liability', 'deductible'
+            ],
+            'es': [
+                'seguro', 'seguros', 'aseguradora', 'aseguradoras', 'póliza', 'pólizas',
+                'prima', 'primas', 'siniestro', 'siniestros', 'reaseguro', 'corredor'
             ]
-            
-            config_file = None
-            for path in config_paths:
-                if os.path.exists(path):
-                    config_file = path
-                    break
-            
-            if config_file:
-                with open(config_file, 'r', encoding='utf-8') as file:
-                    return yaml.safe_load(file)
-            else:
-                logger.warning("Arquivo de configuração não encontrado, usando configuração padrão")
-                return self._get_default_config()
-                
-        except Exception as e:
-            logger.error(f"Erro ao carregar configuração: {e}")
-            return self._get_default_config()
-    
-    def _get_default_config(self) -> Dict[str, Any]:
-        """Retorna configuração padrão caso não consiga carregar o arquivo"""
-        return {
-            'global_settings': {
-                'max_articles_per_source': 50,
-                'max_age_days': 7,
-                'default_timeout': 30,
-                'retry_attempts': 3,
-                'delay_between_requests': 2
-            },
-            'relevance_filters': {
-                'open_insurance_keywords': [
-                    'open insurance', 'open banking', 'seguros abertos', 'apis de seguros'
-                ],
-                'high_priority_keywords': [
-                    'regulamentação', 'susep', 'cnseg', 'lei de seguros', 'insurtech'
-                ],
-                'insurance_keywords': [
-                    'seguro', 'seguros', 'insurance', 'apólice', 'sinistro', 'seguradora'
-                ]
-            }
         }
+        
+        # Palavras-chave específicas para Open Insurance
+        self.open_insurance_keywords = [
+            'open insurance', 'open banking', 'api seguros', 'dados abertos',
+            'compartilhamento dados', 'interoperabilidade', 'sandbox regulatório',
+            'insurtech', 'tecnologia seguros', 'inovação seguros', 'digital insurance',
+            'plataforma digital', 'ecossistema seguros', 'regulamentação digital'
+        ]
+        
+        # Palavras irrelevantes que podem gerar falsos positivos
+        self.irrelevant_keywords = [
+            'segurança', 'security', 'secure', 'assegurar', 'garantir',
+            'certeza', 'certo'
+        ]
+        
+        self.logger.info("NewsAnalyzer inicializado")
     
     def analyze_articles(self, articles: List[NewsArticle]) -> Dict[str, Any]:
         """
-        Analisa uma lista de artigos e retorna estatísticas e insights
+        Analisa uma lista de artigos e retorna estatísticas
         
         Args:
-            articles: Lista de artigos para análise
+            articles: Lista de artigos para analisar
             
         Returns:
-            Dicionário com análise completa
+            Dicionário com estatísticas da análise
         """
-        logger.info(f"Analisando {len(articles)} artigos")
+        self.logger.info(f"Analisando {len(articles)} artigos")
         
-        if not articles:
-            return {
-                'total_articles': 0,
-                'relevant_articles': 0,
-                'open_insurance_articles': 0,
-                'sources_summary': {},
-                'trending_topics': [],
-                'sentiment_analysis': {},
-                'keywords_analysis': {},
-                'regional_distribution': {},
-                'articles_by_priority': {}
-            }
-        
-        # Calcula scores de relevância para todos os artigos
-        for article in articles:
-            if not hasattr(article, 'relevance_score'):
-                article.relevance_score = self.calculate_relevance_score(article)
-        
-        # Análises básicas
-        relevant_articles = [a for a in articles if self.is_relevant(a)]
-        open_insurance_articles = [a for a in articles if self.is_open_insurance_related(a)]
-        
-        # Análise por fonte
-        sources_summary = self._analyze_by_source(articles)
-        
-        # Análise de tópicos em alta
-        trending_topics = self.get_trending_topics(articles)
-        
-        # Análise de sentimento (simplificada)
-        sentiment_analysis = self._analyze_sentiment_distribution(articles)
-        
-        # Análise de palavras-chave
-        keywords_analysis = self._analyze_keywords_frequency(articles)
-        
-        # Distribuição regional
-        regional_distribution = self._analyze_regional_distribution(articles)
-        
-        # Artigos por prioridade
-        articles_by_priority = self._analyze_by_priority(articles)
-        
-        analysis_result = {
+        stats = {
             'total_articles': len(articles),
-            'relevant_articles': len(relevant_articles),
-            'open_insurance_articles': len(open_insurance_articles),
-            'sources_summary': sources_summary,
-            'trending_topics': trending_topics,
-            'sentiment_analysis': sentiment_analysis,
-            'keywords_analysis': keywords_analysis,
-            'regional_distribution': regional_distribution,
-            'articles_by_priority': articles_by_priority,
-            'analysis_timestamp': datetime.now().isoformat()
+            'relevant_articles': 0,
+            'open_insurance_articles': 0,
+            'articles_by_region': {},
+            'articles_by_source': {},
+            'articles_by_relevance': {'high': 0, 'medium': 0, 'low': 0},
+            'keywords_frequency': {},
+            'sentiment_analysis': {'positive': 0, 'neutral': 0, 'negative': 0}
         }
         
-        logger.info(f"Análise concluída: {len(articles)} artigos, {len(open_insurance_articles)} Open Insurance")
+        open_insurance_articles = []
         
-        return analysis_result
+        for article in articles:
+            # Análise de relevância
+            relevance_score = self.calculate_relevance_score(article)
+            article.relevance_score = relevance_score
+            
+            if relevance_score > 0.3:
+                stats['relevant_articles'] += 1
+                
+                # Classificação por nível de relevância
+                if relevance_score > 0.7:
+                    stats['articles_by_relevance']['high'] += 1
+                elif relevance_score > 0.5:
+                    stats['articles_by_relevance']['medium'] += 1
+                else:
+                    stats['articles_by_relevance']['low'] += 1
+            
+            # Verificação de Open Insurance
+            if self.is_open_insurance_related(article):
+                stats['open_insurance_articles'] += 1
+                open_insurance_articles.append(article)
+                article.is_open_insurance = True
+            
+            # Contagem por região
+            region = getattr(article, 'region', 'Unknown')
+            stats['articles_by_region'][region] = stats['articles_by_region'].get(region, 0) + 1
+            
+            # Contagem por fonte
+            source = article.source
+            stats['articles_by_source'][source] = stats['articles_by_source'].get(source, 0) + 1
+            
+            # Análise de sentimento
+            sentiment = self.analyze_sentiment(article)
+            article.sentiment = sentiment
+            stats['sentiment_analysis'][sentiment] += 1
+            
+            # Extração de palavras-chave
+            keywords = self.extract_keywords(article)
+            article.keywords = keywords
+            for keyword in keywords:
+                stats['keywords_frequency'][keyword] = stats['keywords_frequency'].get(keyword, 0) + 1
+        
+        stats['open_insurance_articles_list'] = open_insurance_articles
+        
+        self.logger.info(f"Análise concluída: {len(articles)} artigos, {stats['open_insurance_articles']} Open Insurance")
+        
+        return stats
     
     def calculate_relevance_score(self, article: NewsArticle) -> float:
         """
-        Calcula score de relevância de um artigo (0.0 a 1.0)
+        Calcula score de relevância de um artigo (0-1)
         
         Args:
-            article: Artigo para análise
+            article: Artigo para analisar
             
         Returns:
-            Score de relevância
+            Score de relevância entre 0 e 1
         """
+        text = f"{article.title} {article.summary}".lower()
         score = 0.0
-        text_content = f"{article.title} {article.summary}".lower()
         
-        # Pontuação base por palavras-chave de seguros
-        insurance_matches = sum(1 for keyword in self.insurance_keywords 
-                              if keyword.lower() in text_content)
-        score += min(insurance_matches * 0.1, 0.3)  # Máximo 0.3
+        # Pontuação por palavras-chave de seguros
+        for lang, keywords in self.insurance_keywords.items():
+            for keyword in keywords:
+                if keyword.lower() in text:
+                    # Palavras no título têm peso maior
+                    if keyword.lower() in article.title.lower():
+                        score += 0.15
+                    else:
+                        score += 0.05
         
         # Pontuação extra para Open Insurance
-        open_insurance_matches = sum(1 for keyword in self.open_insurance_keywords 
-                                   if keyword.lower() in text_content)
-        score += min(open_insurance_matches * 0.2, 0.4)  # Máximo 0.4
+        for keyword in self.open_insurance_keywords:
+            if keyword.lower() in text:
+                score += 0.2
         
-        # Pontuação para palavras-chave de alta prioridade
-        high_priority_matches = sum(1 for keyword in self.high_priority_keywords 
-                                  if keyword.lower() in text_content)
-        score += min(high_priority_matches * 0.15, 0.3)  # Máximo 0.3
+        # Penalização por palavras irrelevantes
+        for keyword in self.irrelevant_keywords:
+            if keyword.lower() in text:
+                score -= 0.1
         
-        # Bônus por recência (artigos mais recentes são mais relevantes)
-        if article.date_published:
-            hours_old = (datetime.now() - article.date_published).total_seconds() / 3600
-            if hours_old < 24:
-                score += 0.1  # Bônus para artigos de menos de 24h
-            elif hours_old < 72:
-                score += 0.05  # Bônus menor para artigos de menos de 72h
+        # Normalização
+        score = max(0.0, min(1.0, score))
         
-        return min(score, 1.0)  # Garante que não passe de 1.0
+        return score
     
-    def is_relevant(self, article: NewsArticle) -> bool:
+    def is_relevant(self, text: str, threshold: float = 0.3) -> bool:
         """
-        Verifica se um artigo é relevante para seguros
+        Verifica se um texto é relevante para seguros
         
         Args:
-            article: Artigo para verificação
+            text: Texto para analisar
+            threshold: Limite mínimo de relevância
             
         Returns:
-            True se relevante
+            True se relevante, False caso contrário
         """
-        if not hasattr(article, 'relevance_score'):
-            article.relevance_score = self.calculate_relevance_score(article)
+        # Criar um artigo temporário para usar o método de cálculo
+        temp_article = NewsArticle(
+            title=text[:100],  # Primeiros 100 caracteres como título
+            summary=text,
+            url="",
+            source="temp",
+            published_date=datetime.now()
+        )
         
-        return article.relevance_score >= 0.1  # Threshold mínimo
+        score = self.calculate_relevance_score(temp_article)
+        return score >= threshold
     
     def is_open_insurance_related(self, article: NewsArticle) -> bool:
         """
-        Verifica se um artigo está relacionado ao Open Insurance
+        Verifica se um artigo está relacionado a Open Insurance
         
         Args:
-            article: Artigo para verificação
+            article: Artigo para verificar
             
         Returns:
-            True se relacionado ao Open Insurance
+            True se relacionado a Open Insurance
         """
-        text_content = f"{article.title} {article.summary}".lower()
+        text = f"{article.title} {article.summary}".lower()
         
-        return any(keyword.lower() in text_content 
-                  for keyword in self.open_insurance_keywords)
+        for keyword in self.open_insurance_keywords:
+            if keyword.lower() in text:
+                return True
+        
+        return False
     
     def analyze_sentiment(self, article: NewsArticle) -> str:
         """
-        Analisa o sentimento de um artigo usando análise simples baseada em palavras-chave
+        Analisa o sentimento de um artigo
         
         Args:
-            article: Artigo para análise
+            article: Artigo para analisar
             
         Returns:
-            Sentimento: 'positive', 'negative', 'neutral'
+            'positive', 'neutral' ou 'negative'
         """
-        text_content = f"{article.title} {article.summary}".lower()
-        
-        # Palavras-chave positivas
-        positive_keywords = [
-            'crescimento', 'aumento', 'expansão', 'sucesso', 'melhoria', 'inovação',
-            'oportunidade', 'benefício', 'vantagem', 'progresso', 'desenvolvimento',
-            'lucro', 'ganho', 'positivo', 'otimista', 'forte', 'sólido'
-        ]
-        
-        # Palavras-chave negativas
-        negative_keywords = [
-            'queda', 'redução', 'perda', 'prejuízo', 'crise', 'problema',
-            'dificuldade', 'risco', 'ameaça', 'declínio', 'negativo',
-            'fraude', 'golpe', 'falência', 'demissão', 'corte'
-        ]
-        
-        positive_count = sum(1 for keyword in positive_keywords if keyword in text_content)
-        negative_count = sum(1 for keyword in negative_keywords if keyword in text_content)
-        
-        if positive_count > negative_count:
-            return 'positive'
-        elif negative_count > positive_count:
-            return 'negative'
-        else:
+        try:
+            text = f"{article.title} {article.summary}"
+            blob = TextBlob(text)
+            polarity = blob.sentiment.polarity
+            
+            if polarity > 0.1:
+                return 'positive'
+            elif polarity < -0.1:
+                return 'negative'
+            else:
+                return 'neutral'
+        except Exception as e:
+            self.logger.warning(f"Erro na análise de sentimento: {e}")
             return 'neutral'
     
-    def extract_keywords(self, articles: List[NewsArticle], top_n: int = 10) -> List[Tuple[str, int]]:
+    def extract_keywords(self, article: NewsArticle) -> List[str]:
         """
-        Extrai palavras-chave mais frequentes dos artigos
+        Extrai palavras-chave relevantes de um artigo
         
         Args:
-            articles: Lista de artigos
-            top_n: Número de palavras-chave a retornar
+            article: Artigo para extrair palavras-chave
             
         Returns:
-            Lista de tuplas (palavra-chave, frequência)
+            Lista de palavras-chave
         """
-        all_text = " ".join([f"{a.title} {a.summary}" for a in articles])
-        keywords = self._extract_keywords(all_text)
+        text = f"{article.title} {article.summary}".lower()
+        keywords = []
         
-        # Conta frequências
-        keyword_counts = Counter(keywords)
+        # Busca por palavras-chave conhecidas
+        all_keywords = []
+        for lang_keywords in self.insurance_keywords.values():
+            all_keywords.extend(lang_keywords)
+        all_keywords.extend(self.open_insurance_keywords)
         
-        return keyword_counts.most_common(top_n)
+        for keyword in all_keywords:
+            if keyword.lower() in text:
+                keywords.append(keyword)
+        
+        # Limita a 10 palavras-chave mais relevantes
+        return keywords[:10]
     
-    def classify_by_topic(self, article: NewsArticle) -> List[str]:
+    def classify_by_topic(self, article: NewsArticle) -> str:
         """
-        Classifica um artigo por tópicos
+        Classifica um artigo por tópico
         
         Args:
-            article: Artigo para classificação
+            article: Artigo para classificar
             
         Returns:
-            Lista de tópicos identificados
+            Categoria do tópico
         """
-        text_content = f"{article.title} {article.summary}".lower()
-        topics = []
+        text = f"{article.title} {article.summary}".lower()
         
-        # Mapeamento de tópicos e palavras-chave
-        topic_keywords = {
-            'regulamentacao': ['regulamentação', 'susep', 'lei', 'normativa', 'circular', 'resolução'],
-            'open_insurance': ['open insurance', 'seguros abertos', 'apis', 'compartilhamento'],
-            'tecnologia': ['digital', 'ia', 'inteligencia artificial', 'blockchain', 'insurtech'],
+        # Definição de tópicos e suas palavras-chave
+        topics = {
+            'regulamentação': ['regulamentação', 'susep', 'lei', 'norma', 'regulamento', 'compliance'],
+            'tecnologia': ['tecnologia', 'digital', 'api', 'insurtech', 'inovação', 'artificial'],
             'mercado': ['mercado', 'vendas', 'crescimento', 'participação', 'concorrência'],
-            'produtos': ['seguro auto', 'seguro vida', 'seguro saude', 'previdencia'],
-            'sinistros': ['sinistro', 'indenização', 'fraude', 'perda'],
-            'corretores': ['corretor', 'corretora', 'intermediação', 'venda']
+            'produtos': ['produto', 'apólice', 'cobertura', 'seguro auto', 'seguro vida'],
+            'sinistros': ['sinistro', 'indenização', 'pagamento', 'ressarcimento'],
+            'open_insurance': ['open insurance', 'dados abertos', 'compartilhamento', 'interoperabilidade']
         }
         
-        for topic, keywords in topic_keywords.items():
-            if any(keyword in text_content for keyword in keywords):
-                topics.append(topic)
+        topic_scores = {}
+        for topic, keywords in topics.items():
+            score = 0
+            for keyword in keywords:
+                if keyword in text:
+                    score += 1
+            topic_scores[topic] = score
         
-        return topics if topics else ['geral']
+        # Retorna o tópico com maior pontuação
+        if topic_scores:
+            return max(topic_scores, key=topic_scores.get)
+        else:
+            return 'geral'
     
-    def get_trending_topics(self, articles: List[NewsArticle], top_n: int = 5) -> List[Dict[str, Any]]:
+    def get_trending_topics(self, articles: List[NewsArticle], limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Identifica tópicos em alta
+        Identifica tópicos em tendência
         
         Args:
             articles: Lista de artigos
-            top_n: Número de tópicos a retornar
+            limit: Número máximo de tópicos
             
         Returns:
-            Lista de tópicos em alta com estatísticas
+            Lista de tópicos em tendência
         """
-        topic_counts = defaultdict(int)
-        topic_articles = defaultdict(list)
+        topic_counts = {}
         
         for article in articles:
-            topics = self.classify_by_topic(article)
-            for topic in topics:
-                topic_counts[topic] += 1
-                topic_articles[topic].append(article)
+            topic = self.classify_by_topic(article)
+            topic_counts[topic] = topic_counts.get(topic, 0) + 1
         
         # Ordena por frequência
-        trending = []
-        for topic, count in sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]:
-            trending.append({
-                'topic': topic,
-                'article_count': count,
-                'percentage': round((count / len(articles)) * 100, 1),
-                'sample_titles': [a.title for a in topic_articles[topic][:3]]
-            })
+        trending = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)
         
-        return trending
+        return [
+            {'topic': topic, 'count': count, 'percentage': (count / len(articles)) * 100}
+            for topic, count in trending[:limit]
+        ]
     
     def detect_duplicates(self, articles: List[NewsArticle], similarity_threshold: float = 0.8) -> List[List[NewsArticle]]:
         """
@@ -354,12 +339,12 @@ class NewsAnalyzer:
         
         Args:
             articles: Lista de artigos
-            similarity_threshold: Threshold de similaridade (0.0 a 1.0)
+            similarity_threshold: Limite de similaridade (0-1)
             
         Returns:
             Lista de grupos de artigos similares
         """
-        duplicate_groups = []
+        duplicates = []
         processed = set()
         
         for i, article1 in enumerate(articles):
@@ -367,7 +352,6 @@ class NewsAnalyzer:
                 continue
                 
             similar_group = [article1]
-            processed.add(i)
             
             for j, article2 in enumerate(articles[i+1:], i+1):
                 if j in processed:
@@ -379,9 +363,11 @@ class NewsAnalyzer:
                     processed.add(j)
             
             if len(similar_group) > 1:
-                duplicate_groups.append(similar_group)
+                duplicates.append(similar_group)
+            
+            processed.add(i)
         
-        return duplicate_groups
+        return duplicates
     
     def calculate_similarity(self, article1: NewsArticle, article2: NewsArticle) -> float:
         """
@@ -392,69 +378,63 @@ class NewsAnalyzer:
             article2: Segundo artigo
             
         Returns:
-            Score de similaridade (0.0 a 1.0)
+            Score de similaridade (0-1)
         """
-        # Similaridade simples baseada em palavras comuns
-        text1 = f"{article1.title} {article1.summary}".lower()
-        text2 = f"{article2.title} {article2.summary}".lower()
+        # Similaridade baseada no título
+        title1_words = set(article1.title.lower().split())
+        title2_words = set(article2.title.lower().split())
         
-        words1 = set(re.findall(r'\w+', text1))
-        words2 = set(re.findall(r'\w+', text2))
-        
-        if not words1 or not words2:
+        if not title1_words or not title2_words:
             return 0.0
         
-        intersection = len(words1.intersection(words2))
-        union = len(words1.union(words2))
+        intersection = title1_words.intersection(title2_words)
+        union = title1_words.union(title2_words)
         
-        return intersection / union if union > 0 else 0.0
+        similarity = len(intersection) / len(union) if union else 0.0
+        
+        return similarity
     
-    def filter_articles(self, articles: List[NewsArticle], filters: Dict[str, Any] = None) -> List[NewsArticle]:
+    def filter_articles(self, articles: List[NewsArticle], criteria: Optional[Dict[str, Any]] = None) -> List[NewsArticle]:
         """
-        Filtra artigos baseado em critérios
+        Filtra artigos baseado em critérios de relevância
         
         Args:
-            articles: Lista de artigos
-            filters: Dicionário com filtros a aplicar
+            articles: Lista de artigos para filtrar
+            criteria: Critérios de filtro (opcional)
             
         Returns:
             Lista de artigos filtrados
         """
-        if not filters:
-            filters = {}
+        if not criteria:
+            criteria = {}
         
-        filtered = articles.copy()
+        filtered = []
+        min_relevance = criteria.get('min_relevance', 0.3)
         
-        # Filtro por relevância mínima
-        min_relevance = filters.get('min_relevance', 0.1)
-        filtered = [a for a in filtered if self.calculate_relevance_score(a) >= min_relevance]
+        for article in articles:
+            # Calcula relevância se não foi calculada ainda
+            if not hasattr(article, 'relevance_score'):
+                article.relevance_score = self.calculate_relevance_score(article)
+            
+            # Verifica relevância do artigo
+            if article.relevance_score >= min_relevance:
+                filtered.append(article)
         
-        # Filtro por período
-        if 'max_age_hours' in filters:
-            cutoff_time = datetime.now() - timedelta(hours=filters['max_age_hours'])
-            filtered = [a for a in filtered if a.date_published >= cutoff_time]
-        
-        # Limita número de artigos por fonte
-        max_per_source = filters.get('max_per_source', self.max_articles_per_source)
-        if max_per_source > 0:
-            filtered = self._limit_articles_per_source(filtered, max_per_source)
-        
-        logger.info(f"Filtrados {len(filtered)} artigos de {len(articles)} total")
-        
+        self.logger.info(f"Filtrados {len(filtered)} artigos de {len(articles)} total")
         return filtered
     
-    def get_top_articles(self, articles: List[NewsArticle], top_n: int = 10) -> List[NewsArticle]:
+    def get_top_articles(self, articles: List[NewsArticle], top_n: int = 15) -> List[NewsArticle]:
         """
-        Obtém os principais artigos por relevância
+        Retorna os artigos mais relevantes
         
         Args:
             articles: Lista de artigos
-            top_n: Número de artigos a retornar
+            top_n: Número de artigos para retornar
             
         Returns:
-            Lista dos principais artigos ordenados por relevância
+            Lista dos artigos mais relevantes
         """
-        # Calcula score de relevância para artigos que não têm
+        # Calcula relevância se não foi calculada
         for article in articles:
             if not hasattr(article, 'relevance_score'):
                 article.relevance_score = self.calculate_relevance_score(article)
@@ -462,116 +442,26 @@ class NewsAnalyzer:
         # Ordena por relevância (maior para menor)
         sorted_articles = sorted(articles, key=lambda x: x.relevance_score, reverse=True)
         
-        logger.info(f"Selecionados {min(top_n, len(sorted_articles))} artigos mais relevantes de {len(articles)} total")
+        self.logger.info(f"Selecionados {min(top_n, len(sorted_articles))} artigos mais relevantes de {len(articles)} total")
         
         return sorted_articles[:top_n]
     
-    def _analyze_by_source(self, articles: List[NewsArticle]) -> Dict[str, Dict[str, Any]]:
-        """Analisa artigos agrupados por fonte"""
-        sources_data = defaultdict(lambda: {
-            'count': 0,
-            'avg_relevance': 0.0,
-            'open_insurance_count': 0,
-            'latest_article': None
-        })
-        
-        for article in articles:
-            source = article.source
-            sources_data[source]['count'] += 1
-            sources_data[source]['avg_relevance'] += article.relevance_score
-            
-            if self.is_open_insurance_related(article):
-                sources_data[source]['open_insurance_count'] += 1
-            
-            if (sources_data[source]['latest_article'] is None or 
-                article.date_published > sources_data[source]['latest_article'].date_published):
-                sources_data[source]['latest_article'] = article
-        
-        # Calcula médias
-        for source_data in sources_data.values():
-            if source_data['count'] > 0:
-                source_data['avg_relevance'] /= source_data['count']
-                source_data['avg_relevance'] = round(source_data['avg_relevance'], 3)
-        
-        return dict(sources_data)
-    
-    def _analyze_sentiment_distribution(self, articles: List[NewsArticle]) -> Dict[str, int]:
-        """Analisa distribuição de sentimentos usando análise simples"""
-        sentiment_counts = {'positive': 0, 'negative': 0, 'neutral': 0}
-        
-        # Analisa todos os artigos com método simplificado
-        for article in articles:
-            sentiment = self.analyze_sentiment(article)
-            sentiment_counts[sentiment] += 1
-        
-        return sentiment_counts
-    
-    def _analyze_keywords_frequency(self, articles: List[NewsArticle]) -> Dict[str, int]:
-        """Analisa frequência de palavras-chave"""
-        keywords = self.extract_keywords(articles, top_n=15)
-        return dict(keywords)
-    
-    def _analyze_regional_distribution(self, articles: List[NewsArticle]) -> Dict[str, int]:
-        """Analisa distribuição regional"""
-        regional_counts = defaultdict(int)
-        
-        for article in articles:
-            # Assume que a região está no nome da fonte ou pode ser inferida
-            if hasattr(article, 'region'):
-                regional_counts[article.region] += 1
-            else:
-                regional_counts['Não especificado'] += 1
-        
-        return dict(regional_counts)
-    
-    def _analyze_by_priority(self, articles: List[NewsArticle]) -> Dict[str, int]:
-        """Analisa artigos por nível de prioridade"""
-        priority_counts = {'high': 0, 'medium': 0, 'low': 0}
-        
-        for article in articles:
-            if article.relevance_score >= 0.7:
-                priority_counts['high'] += 1
-            elif article.relevance_score >= 0.4:
-                priority_counts['medium'] += 1
-            else:
-                priority_counts['low'] += 1
-        
-        return priority_counts
-    
-    def _limit_articles_per_source(self, articles: List[NewsArticle], max_per_source: int) -> List[NewsArticle]:
-        """Limita número de artigos por fonte"""
-        source_articles = defaultdict(list)
-        
-        # Agrupa por fonte
-        for article in articles:
-            source_articles[article.source].append(article)
-        
-        # Ordena cada fonte por relevância e limita
-        limited_articles = []
-        for source, source_list in source_articles.items():
-            # Ordena por relevância (maior primeiro)
-            sorted_articles = sorted(source_list, key=lambda x: x.relevance_score, reverse=True)
-            limited_articles.extend(sorted_articles[:max_per_source])
-        
-        # Ordena resultado final por relevância
-        return sorted(limited_articles, key=lambda x: x.relevance_score, reverse=True)
-    
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extrai palavras-chave de um texto"""
-        # Remove pontuação e converte para minúsculas
-        clean_text = re.sub(r'[^\w\s]', ' ', text.lower())
-        words = clean_text.split()
+        """
+        Extrai palavras-chave do texto (método auxiliar)
         
-        # Remove palavras muito comuns (stop words)
+        Args:
+            text: Texto para extrair palavras-chave
+            
+        Returns:
+            Lista de palavras-chave
+        """
+        # Implementação básica de extração de keywords
+        words = text.lower().split()
+        # Filtrar palavras comuns
         stop_words = {
-            'de', 'da', 'do', 'das', 'dos', 'a', 'o', 'as', 'os', 'e', 'em', 'para', 'com', 'por',
-            'que', 'se', 'na', 'no', 'nas', 'nos', 'um', 'uma', 'uns', 'umas', 'é', 'são', 'foi',
+            'o', 'a', 'de', 'da', 'do', 'e', 'em', 'para', 'com', 'por', 'que', 'se', 'na', 'no',
             'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are'
         }
-        
-        # Filtra palavras relevantes (mínimo 3 caracteres, não stop words)
-        keywords = [word for word in words 
-                   if len(word) >= 3 and word not in stop_words]
-        
-        return keywords
-
+        keywords = [word for word in words if word not in stop_words and len(word) > 3]
+        return keywords[:10]  # Top 10 keywords
