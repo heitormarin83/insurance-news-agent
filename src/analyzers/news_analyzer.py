@@ -1,35 +1,27 @@
 """
 Analisador de notícias para o Insurance News Agent
 Responsável por análise de relevância, classificação e processamento de artigos
+VERSÃO CORRIGIDA - SEM NLTK/TEXTBLOB - COMPATÍVEL COM RAILWAY
 """
 
 import re
-import nltk
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from textblob import TextBlob
+from collections import defaultdict, Counter
 
 from ..models import NewsArticle
-from ..utils.logger import get_logger
 
-# Download de recursos NLTK necessários
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords', quiet=True)
+logger = logging.getLogger(__name__)
 
 class NewsAnalyzer:
     """
     Analisador de notícias especializado em seguros
+    VERSÃO CORRIGIDA - SEM DEPENDÊNCIAS EXTERNAS
     """
     
     def __init__(self):
-        self.logger = get_logger("news_analyzer")
+        self.logger = logger
         
         # Palavras-chave relacionadas a seguros (português e inglês)
         self.insurance_keywords = {
@@ -68,7 +60,7 @@ class NewsAnalyzer:
             'certeza', 'certo'
         ]
         
-        self.logger.info("NewsAnalyzer inicializado")
+        self.logger.info("NewsAnalyzer inicializado (versão corrigida)")
     
     def analyze_articles(self, articles: List[NewsArticle]) -> Dict[str, Any]:
         """
@@ -81,6 +73,19 @@ class NewsAnalyzer:
             Dicionário com estatísticas da análise
         """
         self.logger.info(f"Analisando {len(articles)} artigos")
+        
+        if not articles:
+            return {
+                'total_articles': 0,
+                'relevant_articles': 0,
+                'open_insurance_articles': 0,
+                'articles_by_region': {},
+                'articles_by_source': {},
+                'articles_by_relevance': {'high': 0, 'medium': 0, 'low': 0},
+                'keywords_frequency': {},
+                'sentiment_analysis': {'positive': 0, 'neutral': 0, 'negative': 0},
+                'open_insurance_articles_list': []
+            }
         
         stats = {
             'total_articles': len(articles),
@@ -125,7 +130,7 @@ class NewsAnalyzer:
             source = article.source
             stats['articles_by_source'][source] = stats['articles_by_source'].get(source, 0) + 1
             
-            # Análise de sentimento
+            # Análise de sentimento (simplificada)
             sentiment = self.analyze_sentiment(article)
             article.sentiment = sentiment
             stats['sentiment_analysis'][sentiment] += 1
@@ -197,7 +202,7 @@ class NewsAnalyzer:
             summary=text,
             url="",
             source="temp",
-            published_date=datetime.now()
+            date_published=datetime.now()
         )
         
         score = self.calculate_relevance_score(temp_article)
@@ -223,7 +228,7 @@ class NewsAnalyzer:
     
     def analyze_sentiment(self, article: NewsArticle) -> str:
         """
-        Analisa o sentimento de um artigo
+        Analisa o sentimento de um artigo usando análise simples baseada em palavras-chave
         
         Args:
             article: Artigo para analisar
@@ -232,16 +237,34 @@ class NewsAnalyzer:
             'positive', 'neutral' ou 'negative'
         """
         try:
-            text = f"{article.title} {article.summary}"
-            blob = TextBlob(text)
-            polarity = blob.sentiment.polarity
+            text = f"{article.title} {article.summary}".lower()
             
-            if polarity > 0.1:
+            # Palavras-chave positivas
+            positive_keywords = [
+                'crescimento', 'aumento', 'expansão', 'sucesso', 'melhoria', 'inovação',
+                'oportunidade', 'benefício', 'vantagem', 'progresso', 'desenvolvimento',
+                'lucro', 'ganho', 'positivo', 'otimista', 'forte', 'sólido', 'growth',
+                'increase', 'success', 'improvement', 'innovation', 'opportunity'
+            ]
+            
+            # Palavras-chave negativas
+            negative_keywords = [
+                'queda', 'redução', 'perda', 'prejuízo', 'crise', 'problema',
+                'dificuldade', 'risco', 'ameaça', 'declínio', 'negativo',
+                'fraude', 'golpe', 'falência', 'demissão', 'corte', 'decline',
+                'loss', 'crisis', 'problem', 'risk', 'threat', 'fraud'
+            ]
+            
+            positive_count = sum(1 for keyword in positive_keywords if keyword in text)
+            negative_count = sum(1 for keyword in negative_keywords if keyword in text)
+            
+            if positive_count > negative_count:
                 return 'positive'
-            elif polarity < -0.1:
+            elif negative_count > positive_count:
                 return 'negative'
             else:
                 return 'neutral'
+                
         except Exception as e:
             self.logger.warning(f"Erro na análise de sentimento: {e}")
             return 'neutral'
@@ -456,12 +479,20 @@ class NewsAnalyzer:
         Returns:
             Lista de palavras-chave
         """
-        # Implementação básica de extração de keywords
-        words = text.lower().split()
-        # Filtrar palavras comuns
+        # Remove pontuação e converte para minúsculas
+        clean_text = re.sub(r'[^\w\s]', ' ', text.lower())
+        words = clean_text.split()
+        
+        # Remove palavras muito comuns (stop words básicas)
         stop_words = {
-            'o', 'a', 'de', 'da', 'do', 'e', 'em', 'para', 'com', 'por', 'que', 'se', 'na', 'no',
+            'de', 'da', 'do', 'das', 'dos', 'a', 'o', 'as', 'os', 'e', 'em', 'para', 'com', 'por',
+            'que', 'se', 'na', 'no', 'nas', 'nos', 'um', 'uma', 'uns', 'umas', 'é', 'são', 'foi',
             'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are'
         }
-        keywords = [word for word in words if word not in stop_words and len(word) > 3]
-        return keywords[:10]  # Top 10 keywords
+        
+        # Filtra palavras relevantes (mínimo 3 caracteres, não stop words)
+        keywords = [word for word in words 
+                   if len(word) >= 3 and word not in stop_words]
+        
+        return keywords
+
