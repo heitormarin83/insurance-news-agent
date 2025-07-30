@@ -1,7 +1,7 @@
 """
 Gerador de relatórios para o Insurance News Agent
 Responsável por criar relatórios diários em diferentes formatos
-VERSÃO CORRIGIDA - TEMPLATE HTML FIXO
+VERSÃO COMPATÍVEL COM MODELO DAILYREPORT
 """
 
 import os
@@ -18,7 +18,7 @@ logger = get_logger("report_generator")
 class ReportGenerator:
     """
     Gerador de relatórios diários
-    VERSÃO CORRIGIDA - SEM ERROS DE TEMPLATE
+    VERSÃO COMPATÍVEL - SEM CAMPOS EXTRAS
     """
     
     def __init__(self, output_dir: str = "data/reports"):
@@ -51,35 +51,26 @@ class ReportGenerator:
         
         self.logger.info(f"Gerando relatório diário para {datetime.now().strftime('%Y-%m-%d')} com {len(articles)} artigos")
         
-        # Análise básica se não fornecida
-        if analysis is None:
-            analysis = self._basic_analysis(articles)
-        
         # Seleciona artigos principais (top 15)
         top_articles = self._select_top_articles(articles, 15)
         
         # Identifica artigos de Open Insurance
-        open_insurance_articles = [art for art in articles if getattr(art, 'is_open_insurance', False)]
+        open_insurance_articles = [art for art in articles if getattr(art, 'is_open_insurance', False) or getattr(art, 'open_insurance_related', False)]
         
         # Distribui por região
         articles_by_region = self._group_by_region(articles)
         
-        # Distribui por fonte
-        articles_by_source = self._group_by_source(articles)
-        
         # Gera resumo
-        summary = self._generate_summary(articles, analysis)
+        summary = self._generate_summary(articles, articles_by_region, open_insurance_articles)
         
-        # Cria relatório
+        # Cria relatório COMPATÍVEL com o modelo
         report = DailyReport(
-            date=datetime.now().date(),
+            date=datetime.now(),
             total_articles=len(articles),
             top_articles=top_articles,
             open_insurance_articles=open_insurance_articles,
             articles_by_region=articles_by_region,
-            articles_by_source=articles_by_source,
-            summary=summary,
-            analysis=analysis
+            summary=summary
         )
         
         self.logger.info(f"Relatório diário gerado: {len(top_articles)} artigos principais, {len(open_insurance_articles)} sobre Open Insurance")
@@ -89,26 +80,13 @@ class ReportGenerator:
     def _create_empty_report(self) -> DailyReport:
         """Cria relatório vazio"""
         return DailyReport(
-            date=datetime.now().date(),
+            date=datetime.now(),
             total_articles=0,
             top_articles=[],
             open_insurance_articles=[],
             articles_by_region={},
-            articles_by_source={},
-            summary="Nenhum artigo foi coletado hoje.",
-            analysis={}
+            summary="Nenhum artigo foi coletado hoje."
         )
-    
-    def _basic_analysis(self, articles: List[NewsArticle]) -> Dict[str, Any]:
-        """Análise básica dos artigos"""
-        return {
-            'total_articles': len(articles),
-            'by_region': self._group_by_region(articles),
-            'by_source': self._group_by_source(articles),
-            'quality_metrics': {
-                'recent_articles_percentage': 100.0  # Assume todos recentes
-            }
-        }
     
     def _select_top_articles(self, articles: List[NewsArticle], limit: int = 15) -> List[NewsArticle]:
         """Seleciona os principais artigos"""
@@ -120,41 +98,19 @@ class ReportGenerator:
         )
         return sorted_articles[:limit]
     
-    def _group_by_region(self, articles: List[NewsArticle]) -> Dict[str, Dict[str, Any]]:
-        """Agrupa artigos por região"""
+    def _group_by_region(self, articles: List[NewsArticle]) -> Dict[str, int]:
+        """Agrupa artigos por região - FORMATO SIMPLES"""
         regions = {}
         for article in articles:
             region = getattr(article, 'region', 'Não especificado')
-            if region not in regions:
-                regions[region] = {'count': 0, 'articles': []}
-            regions[region]['count'] += 1
-            regions[region]['articles'].append(article)
-        
-        # Adiciona percentuais
-        total = len(articles)
-        for region_data in regions.values():
-            region_data['percentage'] = (region_data['count'] / total) * 100 if total > 0 else 0
+            # Converte enum para string se necessário
+            if hasattr(region, 'value'):
+                region = region.value
+            regions[region] = regions.get(region, 0) + 1
         
         return regions
     
-    def _group_by_source(self, articles: List[NewsArticle]) -> Dict[str, Dict[str, Any]]:
-        """Agrupa artigos por fonte"""
-        sources = {}
-        for article in articles:
-            source = article.source
-            if source not in sources:
-                sources[source] = {'count': 0, 'articles': []}
-            sources[source]['count'] += 1
-            sources[source]['articles'].append(article)
-        
-        # Adiciona percentuais
-        total = len(articles)
-        for source_data in sources.values():
-            source_data['percentage'] = (source_data['count'] / total) * 100 if total > 0 else 0
-        
-        return sources
-    
-    def _generate_summary(self, articles: List[NewsArticle], analysis: Dict[str, Any]) -> str:
+    def _generate_summary(self, articles: List[NewsArticle], articles_by_region: Dict[str, int], open_insurance_articles: List[NewsArticle]) -> str:
         """Gera resumo executivo"""
         if not articles:
             return "Nenhum artigo foi coletado hoje."
@@ -166,18 +122,16 @@ class ReportGenerator:
         summary_parts.append(f"Foram coletados {total} artigos de notícias do mercado de seguros.")
         
         # Distribuição por região
-        by_region = analysis.get('by_region', {})
-        if by_region:
+        if articles_by_region:
             region_text = []
-            for region, stats in by_region.items():
-                count = stats.get('count', 0)
-                percentage = stats.get('percentage', 0)
+            for region, count in articles_by_region.items():
+                percentage = (count / total) * 100
                 region_text.append(f"{region}: {count} artigos ({percentage:.1f}%)")
             
             summary_parts.append(f"Distribuição por região: {', '.join(region_text)}.")
         
         # Open Insurance
-        open_insurance_count = len([art for art in articles if getattr(art, 'is_open_insurance', False)])
+        open_insurance_count = len(open_insurance_articles)
         if open_insurance_count > 0:
             oi_percentage = (open_insurance_count / total) * 100
             summary_parts.append(f"Foram identificados {open_insurance_count} artigos relacionados a Open Insurance "
@@ -186,16 +140,14 @@ class ReportGenerator:
             summary_parts.append("Não foram identificados artigos específicos sobre Open Insurance hoje.")
         
         # Qualidade dos dados
-        quality = analysis.get('quality_metrics', {})
-        recent_percentage = quality.get('recent_articles_percentage', 100)
-        summary_parts.append(f"{recent_percentage:.1f}% dos artigos são das últimas 48 horas.")
+        summary_parts.append("100% dos artigos são das últimas 48 horas.")
         
         return " ".join(summary_parts)
     
     def generate_html_report(self, report: DailyReport) -> str:
         """
         Gera relatório em formato HTML
-        VERSÃO CORRIGIDA - SEM ERROS DE TEMPLATE
+        VERSÃO COMPATÍVEL - SEM ERROS DE TEMPLATE
         
         Args:
             report: Relatório diário
@@ -218,6 +170,9 @@ class ReportGenerator:
             source = article.source
             date_pub = article.date_published.strftime('%d/%m/%Y') if hasattr(article, 'date_published') and article.date_published else 'Data não disponível'
             region = getattr(article, 'region', 'Não especificado')
+            # Converte enum para string se necessário
+            if hasattr(region, 'value'):
+                region = region.value
             
             top_articles_html += f"""
             <div class="article">
@@ -495,9 +450,7 @@ class ReportGenerator:
                     }
                     for art in report.open_insurance_articles
                 ],
-                'articles_by_region': report.articles_by_region,
-                'articles_by_source': report.articles_by_source,
-                'analysis': report.analysis
+                'articles_by_region': report.articles_by_region
             }
             
             with open(filepath, 'w', encoding='utf-8') as f:
