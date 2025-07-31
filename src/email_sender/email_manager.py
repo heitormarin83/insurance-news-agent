@@ -1,19 +1,18 @@
+
 """
-Email Manager - Versão com envio real de e-mails
+Email Manager com yagmail para envio real de e-mails
 """
 
 import os
 import yaml
-import smtplib
-from email.message import EmailMessage
-from typing import List, Dict, Any, Optional
+import yagmail
+from typing import List, Dict, Any
 from pathlib import Path
 from datetime import datetime
 
 from src.utils.logger import get_logger
 
 logger = get_logger("email_manager")
-
 
 class EmailManager:
     def __init__(self, config_path: str = "config/email_config.yaml"):
@@ -22,13 +21,14 @@ class EmailManager:
         self.authenticated = False
         self.logger = logger
 
+        # Verifica se as credenciais de e-mail estão configuradas
         self.smtp_configured = bool(
-            os.getenv('GMAIL_EMAIL') and 
-            os.getenv('GMAIL_APP_PASSWORD')
+            os.getenv('EMAIL_USER') and 
+            os.getenv('EMAIL_APP_PASSWORD')
         )
 
         if self.smtp_configured:
-            self.logger.info("Email Manager inicializado (SMTP configurado)")
+            self.logger.info("Email Manager inicializado (yagmail configurado)")
         else:
             self.logger.warning("Email Manager inicializado (SMTP não configurado)")
 
@@ -65,26 +65,6 @@ class EmailManager:
             }
         }
 
-    def authenticate(self) -> bool:
-        if not self.smtp_configured:
-            self.logger.info("SMTP não configurado - pulando autenticação")
-            return False
-
-        try:
-            email = os.getenv('GMAIL_EMAIL')
-            password = os.getenv('GMAIL_APP_PASSWORD')
-
-            if email and password and '@' in email and len(password) > 10:
-                self.authenticated = True
-                self.logger.info("✅ Credenciais SMTP válidas")
-                return True
-            else:
-                self.logger.warning("❌ Credenciais SMTP inválidas")
-                return False
-        except Exception as e:
-            self.logger.error(f"❌ Erro na autenticação: {e}")
-            return False
-
     def send_daily_report(self, report_html: str) -> bool:
         if not self.smtp_configured:
             self.logger.info("📧 E-mail não configurado - relatório salvo apenas localmente")
@@ -96,25 +76,20 @@ class EmailManager:
                 self.logger.warning("Nenhum destinatário configurado")
                 return True
 
-            email = os.getenv('GMAIL_EMAIL')
-            password = os.getenv('GMAIL_APP_PASSWORD')
+            sender_email = os.getenv("EMAIL_USER")
+            app_password = os.getenv("EMAIL_APP_PASSWORD")
 
-            msg = EmailMessage()
-            msg['Subject'] = '📊 Relatório Diário - Notícias de Seguros'
-            msg['From'] = email
-            msg['To'] = ", ".join(recipients)
-            msg.set_content("Seu cliente de e-mail não suporta HTML.")
-            msg.add_alternative(report_html, subtype='html')
-
-            with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
-                smtp.starttls()
-                smtp.login(email, password)
-                smtp.send_message(msg)
+            yag = yagmail.SMTP(user=sender_email, password=app_password)
+            yag.send(
+                to=recipients,
+                subject='📊 Relatório Diário - Notícias de Seguros',
+                contents=[report_html]
+            )
 
             self.logger.info(f"✅ E-mail enviado com sucesso para {len(recipients)} destinatário(s)")
             return True
         except Exception as e:
-            self.logger.error(f"❌ Erro ao enviar e-mail: {e}")
+            self.logger.error(f"❌ Erro ao enviar e-mail com yagmail: {e}")
             return False
 
 
