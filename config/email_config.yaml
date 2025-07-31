@@ -9,7 +9,7 @@ logging:
 recipients:
   daily_report:
     - "heitor.a.marin@gmail.com"
-    - "heitor.a.marin@gmail.com.br"
+    - "heitor.marin@peers.com.br"
   alerts:
     - "heitor.a.marin@gmail.com"
   errors:
