@@ -1,6 +1,6 @@
 """
 Email Manager - Gerencia o envio de e-mails
-VERSÃO CORRIGIDA - SMTP funcional, sem autenticação redundante
+VERSÃO DEBUG - Adicionado logs para diagnóstico de config
 """
 
 import smtplib
@@ -31,11 +31,17 @@ class EmailManager:
 
     def _load_config(self) -> dict:
         config_path = Path("config/email_config.yaml")
+        logger.info(f"🔠 Caminho completo do config: {config_path.resolve()}")
+
         if not config_path.exists():
-            raise FileNotFoundError(f"Arquivo de configuração não encontrado: {config_path}")
+            logger.error(f"❌ Arquivo de configuração não encontrado: {config_path}")
+            return {}
+
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
-        logger.info("Configuração de e-mail carregada")
+
+        logger.info("🔠 Configuração de e-mail carregada")
+        logger.info(f"🔠 Conteúdo carregado da configuração: {config}")
         return config
 
     def authenticate(self) -> bool:
@@ -55,8 +61,13 @@ class EmailManager:
     def validate_configuration(self) -> dict:
         """Valida a configuração de envio"""
         issues = []
+
+        logger.info(f"🔠 Recipients no config: {self.config.get('recipients')}")
+        logger.info(f"🔠 Daily report recipients: {self.config.get('recipients', {}).get('daily_report')}")
+
         if not self.recipients.get('daily_report'):
             issues.append("Nenhum destinatário configurado para relatório diário")
+
         return {
             'valid': len(issues) == 0,
             'issues': issues,
@@ -66,7 +77,7 @@ class EmailManager:
     def send_daily_report(self, report) -> bool:
         """Envia o relatório diário por e-mail"""
         try:
-            subject = f"📊 Insurance News Report - {report.date.strftime('%d/%m/%Y')}"
+            subject = f"📈 Insurance News Report - {report.date.strftime('%d/%m/%Y')}"
             html_content = EmailTemplate.build_daily_report(report)
 
             return self._send_email(
