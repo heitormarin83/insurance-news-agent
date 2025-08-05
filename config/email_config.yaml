@@ -10,12 +10,12 @@ logging:
 
 recipients:
   daily_report:
-    - heitor.a.marin@gmail.com
-    - heitor.marin@peers.com.br
+    - "heitor.a.marin@gmail.com"
+    - "heitor.marin@peers.com.br"
   alerts:
-    - heitor.a.marin@gmail.com
+    - "heitor.a.marin@gmail.com"
   errors:
-    - heitor.a.marin@gmail.com
+    - "heitor.a.marin@gmail.com"
 
 retry:
   delay_between_attempts: 60
@@ -24,7 +24,7 @@ retry:
 
 sending:
   alert_relevance_threshold: 0.7
-  daily_report_time: '08:00'
+  daily_report_time: 08:00
   immediate_open_insurance_alerts: true
   timezone: America/Sao_Paulo
   weekdays_only: true
