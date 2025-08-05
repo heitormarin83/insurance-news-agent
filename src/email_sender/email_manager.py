@@ -1,6 +1,6 @@
 """
 Email Manager - Gerencia o envio de e-mails
-VERSÃO DEBUG - Adicionado logs para diagnóstico de config
+VERSÃO FINAL - Correção de path absoluto para Railway
 """
 
 import smtplib
@@ -10,7 +10,8 @@ from email.utils import formataddr
 import yaml
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List
+import os
 
 from .email_template import EmailTemplate
 from src.utils.logger import get_logger
@@ -30,8 +31,10 @@ class EmailManager:
         self._authenticated = False
 
     def _load_config(self) -> dict:
-        config_path = Path("config/email_config.yaml")
-        logger.info(f"🔠 Caminho completo do config: {config_path.resolve()}")
+        base_dir = Path(os.getcwd())
+        config_path = base_dir / "config" / "email_config.yaml"
+
+        logger.info(f"🔠 Caminho absoluto final do config: {config_path.resolve()}")
 
         if not config_path.exists():
             logger.error(f"❌ Arquivo de configuração não encontrado: {config_path}")
@@ -45,11 +48,9 @@ class EmailManager:
         return config
 
     def authenticate(self) -> bool:
-        """Simula autenticação (apenas inicializa SMTP e verifica config mínima)."""
         if self._authenticated:
             return True
 
-        # Você pode implementar aqui verificação real se necessário
         self.smtp_user = "seu_email@gmail.com"
         self.smtp_password = "sua_senha_de_aplicativo"
 
@@ -59,11 +60,10 @@ class EmailManager:
         return False
 
     def validate_configuration(self) -> dict:
-        """Valida a configuração de envio"""
         issues = []
 
-        logger.info(f"🔠 Recipients no config: {self.config.get('recipients')}")
-        logger.info(f"🔠 Daily report recipients: {self.config.get('recipients', {}).get('daily_report')}")
+        logger.info(f"🔠 SELF.recipients atual: {self.recipients}")
+        logger.info(f"🔠 SELF.recipients[daily_report]: {self.recipients.get('daily_report')}")
 
         if not self.recipients.get('daily_report'):
             issues.append("Nenhum destinatário configurado para relatório diário")
@@ -75,7 +75,6 @@ class EmailManager:
         }
 
     def send_daily_report(self, report) -> bool:
-        """Envia o relatório diário por e-mail"""
         try:
             subject = f"📈 Insurance News Report - {report.date.strftime('%d/%m/%Y')}"
             html_content = EmailTemplate.build_daily_report(report)
@@ -90,7 +89,6 @@ class EmailManager:
             return False
 
     def send_open_insurance_alert(self, articles: List) -> bool:
-        """Envia alerta de artigos relevantes sobre Open Insurance"""
         try:
             subject = f"🚨 Alerta: Novidades Open Insurance - {datetime.now().strftime('%d/%m/%Y')}"
             html_content = EmailTemplate.build_open_insurance_alert(articles)
@@ -105,7 +103,6 @@ class EmailManager:
             return False
 
     def send_error_notification(self, error_info: dict) -> bool:
-        """Envia notificação de erro para administradores"""
         try:
             subject = "❌ Erro no Insurance News Agent"
             html = f"<h2>Erro detectado</h2><p>{error_info.get('error')}</p><pre>{error_info.get('details')}</pre>"
@@ -120,7 +117,6 @@ class EmailManager:
             return False
 
     def send_test_email(self, email: str) -> bool:
-        """Envia um e-mail de teste"""
         try:
             subject = "✅ Teste de envio de e-mail"
             html = "<p>Este é um e-mail de teste do Insurance News Agent</p>"
@@ -134,7 +130,6 @@ class EmailManager:
             return False
 
     def _send_email(self, recipients: List[str], subject: str, html: str) -> bool:
-        """Envia um e-mail via SMTP"""
         try:
             msg = MIMEMultipart()
             msg['From'] = formataddr((self.sender_name, self.smtp_user))
