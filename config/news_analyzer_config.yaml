@@ -1,0 +1,156 @@
+weights:
+  title_keyword: 0.15
+  summary_keyword: 0.05
+  open_insurance_bonus: 0.2
+  irrelevant_penalty: -0.1
+
+keywords:
+  insurance:
+    pt:
+      - seguro
+      - seguros
+      - seguradora
+      - seguradoras
+      - apólice
+      - apólices
+      - prêmio
+      - prêmios
+      - sinistro
+      - sinistros
+      - indenização
+      - resseguro
+      - corretora
+      - corretor
+      - susep
+      - cnseg
+      - fenaseg
+      - bradesco seguros
+      - porto seguro
+      - itaú seguros
+      - zurich
+      - allianz
+      - mapfre
+      - seguro auto
+      - seguro vida
+      - seguro saúde
+      - seguro residencial
+      - seguro empresarial
+      - previdência
+      - capitalização
+    en:
+      - insurance
+      - insurer
+      - insurers
+      - policy
+      - policies
+      - premium
+      - premiums
+      - claim
+      - claims
+      - coverage
+      - reinsurance
+      - broker
+      - underwriting
+      - actuarial
+      - risk management
+      - life insurance
+      - health insurance
+      - auto insurance
+      - property insurance
+      - casualty insurance
+      - liability
+      - deductible
+    es:
+      - seguro
+      - seguros
+      - aseguradora
+      - aseguradoras
+      - póliza
+      - pólizas
+      - prima
+      - primas
+      - siniestro
+      - siniestros
+      - reaseguro
+      - corredor
+
+  open_insurance:
+    - open insurance
+    - open banking
+    - api seguros
+    - dados abertos
+    - compartilhamento dados
+    - interoperabilidade
+    - sandbox regulatório
+    - insurtech
+    - tecnologia seguros
+    - inovação seguros
+    - digital insurance
+    - plataforma digital
+    - ecossistema seguros
+    - regulamentação digital
+
+  irrelevant:
+    - segurança
+    - security
+    - secure
+    - assegurar
+    - garantir
+    - certeza
+    - certo
+
+  positive:
+    - crescimento
+    - aumento
+    - expansão
+    - sucesso
+    - melhoria
+    - inovação
+    - oportunidade
+    - benefício
+    - vantagem
+    - progresso
+    - desenvolvimento
+    - lucro
+    - ganho
+    - positivo
+    - otimista
+    - forte
+    - sólido
+    - growth
+    - increase
+    - success
+    - improvement
+    - innovation
+    - opportunity
+
+  negative:
+    - queda
+    - redução
+    - perda
+    - prejuízo
+    - crise
+    - problema
+    - dificuldade
+    - risco
+    - ameaça
+    - declínio
+    - negativo
+    - fraude
+    - golpe
+    - falência
+    - demissão
+    - corte
+    - decline
+    - loss
+    - crisis
+    - problem
+    - risk
+    - threat
+    - fraud
+
+irrelevant_contexts:
+  - security token
+  - internet security
+  - cyber security
+  - safe and secure
