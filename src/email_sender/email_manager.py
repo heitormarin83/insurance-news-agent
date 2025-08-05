@@ -1,6 +1,6 @@
 """
-Email Manager - Gerencia o envio de e-mails
-VERSÃO FINAL - Correção de path absoluto para Railway
+Email Manager - Gerencia o envio de e-mails via SMTP (Gmail)
+VERSÃO FINAL - Railway/GitHub Actions Ready (Security Best Practices)
 """
 
 import smtplib
@@ -24,10 +24,18 @@ class EmailManager:
         self.config = self._load_config()
         self.sender_name = self.config.get('gmail', {}).get('sender_name', 'Insurance News Agent')
         self.recipients = self.config.get('recipients', {})
+
+        # SMTP Settings (use environment variables for security)
         self.smtp_server = 'smtp.gmail.com'
         self.smtp_port = 587
-        self.smtp_user = None
-        self.smtp_password = None
+        self.smtp_user = os.getenv('GMAIL_EMAIL')
+        self.smtp_password = os.getenv('GMAIL_APP_PASSWORD')
+
+        if not self.smtp_user or not self.smtp_password:
+            logger.error("❌ GMAIL_EMAIL ou GMAIL_APP_PASSWORD não configurados nas variáveis de ambiente")
+        else:
+            logger.info(f"📧 GMAIL_EMAIL configurado: {self.smtp_user}")
+
         self._authenticated = False
 
     def _load_config(self) -> dict:
@@ -51,12 +59,11 @@ class EmailManager:
         if self._authenticated:
             return True
 
-        self.smtp_user = "seu_email@gmail.com"
-        self.smtp_password = "sua_senha_de_aplicativo"
-
         if self.smtp_user and self.smtp_password:
             self._authenticated = True
             return True
+
+        logger.error("❌ GMAIL_EMAIL e GMAIL_APP_PASSWORD não configurados corretamente.")
         return False
 
     def validate_configuration(self) -> dict:
@@ -131,6 +138,10 @@ class EmailManager:
 
     def _send_email(self, recipients: List[str], subject: str, html: str) -> bool:
         try:
+            if not self.authenticate():
+                logger.error("❌ Falha na autenticação do SMTP")
+                return False
+
             msg = MIMEMultipart()
             msg['From'] = formataddr((self.sender_name, self.smtp_user))
             msg['To'] = ', '.join(recipients)
@@ -143,8 +154,8 @@ class EmailManager:
                 server.login(self.smtp_user, self.smtp_password)
                 server.sendmail(self.smtp_user, recipients, msg.as_string())
 
-            logger.info(f"E-mail enviado para: {recipients}")
+            logger.info(f"✅ E-mail enviado para: {recipients}")
             return True
         except Exception as e:
-            logger.error(f"Falha ao enviar e-mail: {e}")
+            logger.error(f"❌ Falha ao enviar e-mail: {e}")
             return False
