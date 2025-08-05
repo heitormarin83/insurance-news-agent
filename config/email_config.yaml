@@ -10,12 +10,12 @@ logging:
 
 recipients:
   daily_report:
-    - "heitor.a.marin@gmail.com"
-    - "heitor.marin@peers.com.br"
+    - heitor.a.marin@gmail.com
+    - heitor.marin@peers.com.br
   alerts:
-    - "heitor.a.marin@gmail.com"
+    - heitor.a.marin@gmail.com
   errors:
-    - "heitor.a.marin@gmail.com"
+    - heitor.a.marin@gmail.com
 
 retry:
   delay_between_attempts: 60
