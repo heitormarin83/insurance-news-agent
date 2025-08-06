@@ -1,11 +1,9 @@
 name: Daily Insurance News Collection
 
 on:
-  # Executa todos os dias às 7:00 UTC (4:00 BRT)
   schedule:
-    - cron: '0 7 * * *'
-  
-  # Permite execução manual
+    - cron: '0 7 * * *'  # Todos os dias às 7:00 UTC (4:00 BRT)
+
   workflow_dispatch:
     inputs:
       send_email:
@@ -22,28 +20,28 @@ on:
 jobs:
   collect-and-send:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
     - name: Create config directories
       run: |
         mkdir -p config
         mkdir -p data/reports
         mkdir -p logs
-    
+
     - name: Setup Gmail credentials
       env:
         GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
@@ -53,7 +51,7 @@ jobs:
         if [ ! -z "$GMAIL_TOKEN" ]; then
           echo "$GMAIL_TOKEN" > config/token.json
         fi
-    
+
     - name: Setup email configuration
       env:
         EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
@@ -61,7 +59,7 @@ jobs:
         EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
       run: |
         python scripts/setup_email_config.py
-    
+
     - name: Run news collection
       id: collection
       run: |
@@ -69,31 +67,35 @@ jobs:
         export PYTHONPATH=$GITHUB_WORKSPACE:$PYTHONPATH
         python src/main.py --action collect > collection_output.log 2>&1
         echo "collection_status=$?" >> $GITHUB_OUTPUT
-        
-        if [ -f "data/reports/relatorio_seguros_$(date +%Y-%m-%d).json" ]; then
+
+        report_path="data/reports/daily_report_$(date +%Y-%m-%d).json"
+        if [ -f "$report_path" ]; then
           echo "report_generated=true" >> $GITHUB_OUTPUT
-          TOTAL_ARTICLES=$(python -c "import json; data=json.load(open('data/reports/relatorio_seguros_$(date +%Y-%m-%d).json')); print(data['total_articles'])")
-          OPEN_INSURANCE=$(python -c "import json; data=json.load(open('data/reports/relatorio_seguros_$(date +%Y-%m-%d).json')); print(len(data['open_insurance_articles']))")
+          TOTAL_ARTICLES=$(python -c "import json; data=json.load(open('$report_path')); print(data['total_articles'])")
+          OPEN_INSURANCE=$(python -c "import json; data=json.load(open('$report_path')); print(len(data['open_insurance_articles']))")
           echo "total_articles=$TOTAL_ARTICLES" >> $GITHUB_OUTPUT
           echo "open_insurance_articles=$OPEN_INSURANCE" >> $GITHUB_OUTPUT
         else
           echo "report_generated=false" >> $GITHUB_OUTPUT
         fi
-    
+
     - name: Send daily report email
-      if: steps.collection.outputs.collection_status == '0' && (github.event.inputs.send_email != 'false' && github.event.inputs.test_mode != 'true')
+      if: steps.collection.outputs.collection_status == '0' && github.event.inputs.test_mode != 'true'
       env:
-        SEND_EMAIL: ${{ github.event.inputs.send_email || 'true' }}
+        GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: |
         python scripts/send_daily_email.py
-    
+
     - name: Send error notification
       if: steps.collection.outputs.collection_status != '0'
       env:
-        ERROR_LOG: collection_output.log
+        GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: |
-        python scripts/send_error_notification.py
-    
+        echo "Erro encontrado durante a coleta. Veja o log abaixo:"
+        cat collection_output.log
+
     - name: Upload reports as artifacts
       if: always()
       uses: actions/upload-artifact@v4
@@ -104,13 +106,13 @@ jobs:
           logs/
           collection_output.log
         retention-days: 30
-    
+
     - name: Update job summary
       if: always()
       run: |
         echo "## 📊 Relatório de Execução - $(date '+%d/%m/%Y')" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
+
         if [ "${{ steps.collection.outputs.collection_status }}" == "0" ]; then
           echo "✅ **Status**: Coleta executada com sucesso" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.collection.outputs.report_generated }}" == "true" ]; then
@@ -120,40 +122,47 @@ jobs:
         else
           echo "❌ **Status**: Erro na coleta" >> $GITHUB_STEP_SUMMARY
         fi
-        
+
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "🕐 **Horário de execução**: $(date '+%d/%m/%Y às %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-        
+
         if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
-          echo "🧪 **Modo**: Teste (e-mails não enviados)" >> $GITHUB_STEP_SUMMARY
+          echo "🦪 **Modo**: Teste (e-mails não enviados)" >> $GITHUB_STEP_SUMMARY
         fi
+
+    - name: Debugging Info
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        echo "### Debug Info" >> $GITHUB_STEP_SUMMARY
+        env | grep GMAIL_ >> $GITHUB_STEP_SUMMARY
+        echo "Working Directory: $(pwd)" >> $GITHUB_STEP_SUMMARY
 
   monitor-sources:
     runs-on: ubuntu-latest
     if: github.event.schedule && github.event.schedule == '0 7 * * 1'
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
     - name: Test all sources
       run: |
         cd $GITHUB_WORKSPACE
         export PYTHONPATH=$GITHUB_WORKSPACE:$PYTHONPATH
         python src/main.py --action test > sources_test.log 2>&1
         echo "Sources test completed"
-    
+
     - name: Upload test results
       uses: actions/upload-artifact@v4
       with:
