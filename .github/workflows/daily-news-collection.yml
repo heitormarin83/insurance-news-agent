@@ -22,6 +22,9 @@ jobs:
     env:
       GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
+      EMAIL_RECIPIENTS_ALERTS: ${{ secrets.EMAIL_RECIPIENTS_ALERTS }}
+      EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
 
     steps:
     - name: Checkout repository
@@ -42,23 +45,10 @@ jobs:
       run: |
         mkdir -p config
         mkdir -p data/reports
+        mkdir -p data/deduplication
         mkdir -p logs
 
-    - name: Setup Gmail credentials files
-      env:
-        GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
-        GMAIL_TOKEN: ${{ secrets.GMAIL_TOKEN }}
-      run: |
-        echo "$GMAIL_CREDENTIALS" > config/credentials.json
-        if [ ! -z "$GMAIL_TOKEN" ]; then
-          echo "$GMAIL_TOKEN" > config/token.json
-        fi
-
     - name: Setup email configuration
-      env:
-        EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
-        EMAIL_RECIPIENTS_ALERTS: ${{ secrets.EMAIL_RECIPIENTS_ALERTS }}
-        EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
       run: |
         python scripts/setup_email_config.py
 
@@ -70,11 +60,11 @@ jobs:
         python src/main.py --action collect > collection_output.log 2>&1
         echo "collection_status=$?" >> $GITHUB_OUTPUT
         
-        REPORT_PATH="data/reports/relatorio_seguros_$(date +%Y-%m-%d).json"
+        REPORT_PATH="data/reports/daily_report_$(date +%Y-%m-%d).json"
         if [ -f "$REPORT_PATH" ]; then
           echo "report_generated=true" >> $GITHUB_OUTPUT
           TOTAL_ARTICLES=$(python -c "import json; data=json.load(open('$REPORT_PATH')); print(data['total_articles'])")
-          OPEN_INSURANCE=$(python -c "import json; data=json.load(open('$REPORT_PATH')); print(len(data['open_insurance_articles']))")
+          OPEN_INSURANCE=$(python -c "import json; data=json.load(open('$REPORT_PATH')); print(len(data.get('open_insurance_articles', [])))")
           echo "total_articles=$TOTAL_ARTICLES" >> $GITHUB_OUTPUT
           echo "open_insurance_articles=$OPEN_INSURANCE" >> $GITHUB_OUTPUT
         else
