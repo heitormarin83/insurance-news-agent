@@ -1,5 +1,5 @@
 # Insurance News Agent - Dependências Principais
-# Versão corrigida - sem NLTK/TextBlob
+# Versão corrigida URGENTE - sem smtplib2 problemático
 
 # Framework Web
 Flask==3.0.0
@@ -26,8 +26,9 @@ loguru==0.7.2
 python-dateutil==2.8.2
 pytz==2023.3
 
-# E-mail
-smtplib2==0.2.1
+# E-mail (usando biblioteca padrão do Python)
+# Removido: smtplib2==0.2.1 (não existe!)
+# O Python já tem smtplib nativo
 
 # Utilitários
 pathlib2==2.3.7
@@ -47,9 +48,6 @@ psutil==5.9.6
 # Segurança
 cryptography==41.0.7
 
-# Processamento de Texto (apenas padrão Python)
-# Removido: nltk, textblob (não utilizados)
-
 # HTTP e APIs
 urllib3==2.1.0
 certifi==2023.11.17
@@ -63,6 +61,3 @@ jsonschema==4.20.0
 
 # Cache e Performance
 cachetools==5.3.2
-
-# Timezone
-zoneinfo==0.2.1; python_version < "3.9"
