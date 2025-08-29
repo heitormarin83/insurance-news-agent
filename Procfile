@@ -1,2 +1,2 @@
-web: gunicorn app:app --bind 0.0.0.0:$PORT
-worker: python scheduler.py
+web: python -u app.py
+worker: python -u scheduler.py
