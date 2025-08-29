@@ -1,17 +1,68 @@
-flask==3.0.0
-flask-cors==4.0.0
+# Insurance News Agent - Dependências Principais
+# Versão corrigida - sem NLTK/TextBlob
+
+# Framework Web
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Scraping e Requests
 requests==2.31.0
 beautifulsoup4==4.12.2
+lxml==4.9.3
 feedparser==6.0.10
-pandas==2.1.3
-google-api-python-client==2.108.0
-google-auth-httplib2==0.1.1
-google-auth-oauthlib==1.1.0
+
+# Processamento de Dados
+pandas==2.1.4
+numpy==1.24.3
+
+# Configuração e Serialização
+PyYAML==6.0.1
 python-dotenv==1.0.0
-pyyaml==6.0.1
+
+# Logging Avançado
 loguru==0.7.2
-nltk==3.8.1
-schedule==1.2.0
-textblob==0.17.1
+
+# Data e Tempo
+python-dateutil==2.8.2
+pytz==2023.3
+
+# E-mail
+smtplib2==0.2.1
+
+# Utilitários
+pathlib2==2.3.7
+typing-extensions==4.8.0
+
+# Desenvolvimento e Testes (opcionais)
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Deployment
 gunicorn==21.2.0
-yagmail
+waitress==2.1.2
+
+# Monitoramento
+psutil==5.9.6
+
+# Segurança
+cryptography==41.0.7
+
+# Processamento de Texto (apenas padrão Python)
+# Removido: nltk, textblob (não utilizados)
+
+# HTTP e APIs
+urllib3==2.1.0
+certifi==2023.11.17
+
+# Utilitários de Sistema
+click==8.1.7
+colorama==0.4.6
+
+# Processamento JSON
+jsonschema==4.20.0
+
+# Cache e Performance
+cachetools==5.3.2
+
+# Timezone
+zoneinfo==0.2.1; python_version < "3.9"
