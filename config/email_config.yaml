@@ -1,37 +1,27 @@
-gmail:
-  credentials_file: config/credentials.json
-  sender_name: Insurance News Agent
-  token_file: config/token.json
-
-logging:
-  log_directory: logs/email
-  log_retention_days: 30
-  save_email_logs: true
-
-recipients:
-  daily_report:
-    - heitor.a.marin@gmail.com
-    - heitor.marin@peers.com.br
-  alerts:
-    - heitor.a.marin@gmail.com
-  errors:
-    - heitor.a.marin@gmail.com
-
-retry:
-  delay_between_attempts: 60
-  max_attempts: 3
-  notify_on_failure: true
-
-sending:
-  alert_relevance_threshold: 0.7
-  daily_report_time: 08:00
-  immediate_open_insurance_alerts: true
-  timezone: America/Sao_Paulo
-  weekdays_only: true
-
-templates:
-  include_article_summaries: true
-  include_detailed_stats: true
-  max_open_insurance_articles: 5
-  max_summary_length: 200
-  max_top_articles: 10
+*** a/config/email_config.yaml
+--- b/config/email_config.yaml
+@@
+ recipients:
+-  alerts: []
+-  daily_report: []
+-  errors: []
++  alerts: []         # será sobrescrito por EMAIL_RECIPIENTS_ALERTS (ENV), se existir
++  daily_report: []   # será sobrescrito por EMAIL_RECIPIENTS_DAILY (ENV), se existir
++  errors: []         # será sobrescrito por EMAIL_RECIPIENTS_ERRORS (ENV), se existir
+ 
+ smtp:
+   port: 587
+   sender_name: "Insurance News Agent"
+   server: "smtp.gmail.com"
+   use_tls: true
+ 
+ templates:
+   alert:
+     subject: "Alerta - Insurance News Agent - {alert_type}"
+     template_file: "alert_template.html"
+   daily_report:
+     subject: "Relatório Diário - Notícias de Seguros - {date}"
+     template_file: "daily_report_template.html"
+   error:
+     subject: "Erro - Insurance News Agent - {error_type}"
+     template_file: "error_template.html"
