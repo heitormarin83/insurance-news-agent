@@ -1,207 +1,362 @@
 """
-Scheduler para execução automática no Railway
-Executa coleta diária e outras tarefas agendadas
+Scheduler para execução automática de tarefas do Insurance News Agent
+Versão corrigida - campos corretos do modelo
 """
 
-import os
-import time
 import schedule
-from datetime import datetime
+import time
+import threading
+from datetime import datetime, timedelta
+from typing import Optional, Callable, Dict, Any
+import logging
 from pathlib import Path
 
 from src.main import InsuranceNewsAgent
-from src.email_sender.email_manager import EmailManager
 from src.utils.logger import get_logger
+from src.email_sender.email_manager import EmailManager
 
-logger = get_logger("scheduler")
-
-
-class InsuranceNewsScheduler:
-    """Scheduler para execução automática"""
+class NewsScheduler:
+    """Agendador de tarefas para coleta automática de notícias"""
     
     def __init__(self):
         """Inicializa o scheduler"""
-        self.agent = InsuranceNewsAgent()
-        self.email_manager = EmailManager()
+        self.logger = get_logger("scheduler")
+        self.agent = None
+        self.email_manager = None
+        self.is_running = False
+        self.scheduler_thread = None
         
-        # Configurações do ambiente
-        self.timezone = os.getenv('TIMEZONE', 'America/Sao_Paulo')
-        self.daily_time = os.getenv('DAILY_COLLECTION_TIME', '08:00')
-        self.enable_email = os.getenv('ENABLE_EMAIL', 'true').lower() == 'true'
+        # Configurações padrão
+        self.config = {
+            'collection_time': '07:00',  # Horário da coleta diária (UTC)
+            'timezone': 'UTC',
+            'max_retries': 3,
+            'retry_delay_minutes': 30,
+            'cleanup_days': 7  # Dias para manter arquivos antigos
+        }
         
-        logger.info("📅 Insurance News Scheduler inicializado")
-        logger.info(f"⏰ Horário da coleta diária: {self.daily_time}")
-        logger.info(f"📧 E-mail habilitado: {self.enable_email}")
+        self.logger.info("NewsScheduler inicializado")
     
-    def daily_collection_job(self):
-        """Job de coleta diária"""
+    def initialize_components(self) -> bool:
+        """
+        Inicializa os componentes necessários
+        
+        Returns:
+            bool: True se inicialização foi bem-sucedida
+        """
         try:
-            logger.info("🚀 Iniciando coleta diária agendada")
+            # Inicializar agente de notícias
+            self.agent = InsuranceNewsAgent()
+            self.logger.info("✅ InsuranceNewsAgent inicializado")
             
-            # Executa coleta
-            result = self.agent.run_daily_collection()
+            # Inicializar gerenciador de e-mail
+            self.email_manager = EmailManager()
+            self.logger.info("✅ EmailManager inicializado")
             
-            if result['success']:
-                logger.info(f"✅ Coleta diária concluída: {result['total_articles_collected']} artigos")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erro na inicialização dos componentes: {e}")
+            return False
+    
+    def setup_daily_schedule(self) -> None:
+        """Configura o agendamento diário"""
+        collection_time = self.config['collection_time']
+        
+        # Agendar coleta diária
+        schedule.every().day.at(collection_time).do(self._run_daily_collection)
+        
+        # Agendar limpeza semanal (domingo às 02:00)
+        schedule.every().sunday.at("02:00").do(self._run_cleanup)
+        
+        self.logger.info(f"📅 Agendamento configurado: coleta diária às {collection_time} UTC")
+    
+    def _run_daily_collection(self) -> None:
+        """Executa a coleta diária de notícias"""
+        self.logger.info("🚀 Iniciando coleta diária de notícias")
+        
+        try:
+            # Executar coleta
+            result = self.agent.collect_and_analyze_news()
+            
+            if result and result.get('success', False):
+                # Obter estatísticas do resultado
+                total_articles = result.get('total_articles', 0)
+                duplicates_removed = result.get('duplicates_removed', 0)
+                report_path = result.get('report_path', '')
                 
-                # Envia e-mail se habilitado
-                if self.enable_email:
-                    try:
-                        if self.email_manager.authenticate():
-                            success = self.email_manager.send_daily_report(result['daily_report'])
-                            
-                            if success:
-                                logger.info("📧 E-mail diário enviado com sucesso")
-                                
-                                # Envia alerta Open Insurance se houver
-                                if result['open_insurance_articles_count'] > 0:
-                                    open_insurance_articles = [
-                                        article for article in result['daily_report'].top_articles 
-                                        if article.open_insurance_related
-                                    ]
-                                    
-                                    if open_insurance_articles:
-                                        alert_success = self.email_manager.send_open_insurance_alert(open_insurance_articles)
-                                        if alert_success:
-                                            logger.info("🚨 Alerta Open Insurance enviado")
-                            else:
-                                logger.error("❌ Falha no envio do e-mail diário")
-                        else:
-                            logger.error("❌ Falha na autenticação do e-mail")
+                self.logger.info(f"✅ Coleta concluída: {total_articles} artigos, {duplicates_removed} duplicatas removidas")
+                
+                # Enviar e-mail se relatório foi gerado
+                if report_path and Path(report_path).exists():
+                    self._send_daily_email(report_path, total_articles)
+                else:
+                    self.logger.warning("⚠️ Relatório não foi gerado - e-mail não enviado")
                     
-                    except Exception as e:
-                        logger.error(f"❌ Erro no envio de e-mail: {e}")
-                        
-                        # Tenta enviar notificação de erro
-                        try:
-                            self.email_manager.send_error_notification({
-                                'error': 'Erro no envio do e-mail diário',
-                                'details': str(e)
-                            })
-                        except:
-                            pass
             else:
-                logger.error("❌ Falha na coleta diária")
+                error_msg = result.get('error', 'Erro desconhecido') if result else 'Falha na coleta'
+                self.logger.error(f"❌ Falha na coleta: {error_msg}")
+                self._send_error_notification("Falha na coleta diária", error_msg)
                 
-                # Envia notificação de erro
-                if self.enable_email:
-                    try:
-                        if self.email_manager.authenticate():
-                            self.email_manager.send_error_notification({
-                                'error': 'Falha na coleta diária de notícias',
-                                'details': 'A coleta diária falhou. Verifique os logs para mais detalhes.'
-                            })
-                    except Exception as e:
-                        logger.error(f"❌ Erro ao enviar notificação de erro: {e}")
-        
         except Exception as e:
-            logger.error(f"❌ Erro crítico na coleta diária: {e}")
-            
-            # Tenta enviar notificação de erro crítico
-            if self.enable_email:
-                try:
-                    if self.email_manager.authenticate():
-                        self.email_manager.send_error_notification({
-                            'error': 'Erro crítico no sistema',
-                            'details': f'Erro crítico durante a execução: {str(e)}'
-                        })
-                except:
-                    pass
+            self.logger.error(f"❌ Erro durante coleta diária: {e}")
+            self._send_error_notification("Erro na coleta diária", str(e))
     
-    def weekly_source_test_job(self):
-        """Job de teste semanal das fontes"""
+    def _send_daily_email(self, report_path: str, total_articles: int) -> None:
+        """
+        Envia e-mail com relatório diário
+        
+        Args:
+            report_path: Caminho para o arquivo de relatório
+            total_articles: Número total de artigos coletados
+        """
         try:
-            logger.info("🧪 Iniciando teste semanal das fontes")
+            if not self.email_manager:
+                self.logger.warning("⚠️ EmailManager não inicializado - pulando envio de e-mail")
+                return
             
-            result = self.agent.test_sources()
+            # Preparar dados do e-mail
+            today = datetime.now().strftime('%Y-%m-%d')
+            subject = f"Relatório Diário - Notícias de Seguros - {today}"
             
-            # Conta fontes com problemas
-            failed_sources = sum(1 for source_result in result.values() if not source_result.get('success', False))
-            total_sources = len(result)
+            # Carregar relatório HTML se existir
+            html_report_path = report_path.replace('.json', '.html')
             
-            logger.info(f"📊 Teste concluído: {total_sources - failed_sources}/{total_sources} fontes funcionando")
+            if Path(html_report_path).exists():
+                with open(html_report_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+            else:
+                html_content = f"""
+                <h2>Relatório Diário - {today}</h2>
+                <p>Total de artigos coletados: {total_articles}</p>
+                <p>Relatório detalhado em anexo.</p>
+                """
             
-            # Envia notificação se muitas fontes falharam
-            if failed_sources > 5 and self.enable_email:
-                try:
-                    if self.email_manager.authenticate():
-                        self.email_manager.send_error_notification({
-                            'error': f'Muitas fontes com problemas: {failed_sources}/{total_sources}',
-                            'details': f'Teste semanal identificou {failed_sources} fontes com problemas de {total_sources} total.'
-                        })
-                        logger.info("🚨 Notificação de fontes com problemas enviada")
-                except Exception as e:
-                    logger.error(f"❌ Erro ao enviar notificação de teste: {e}")
-        
+            # Enviar e-mail
+            success = self.email_manager.send_daily_report(
+                subject=subject,
+                html_content=html_content,
+                attachments=[report_path] if Path(report_path).exists() else []
+            )
+            
+            if success:
+                self.logger.info("✅ E-mail diário enviado com sucesso")
+            else:
+                self.logger.error("❌ Falha no envio do e-mail diário")
+                
         except Exception as e:
-            logger.error(f"❌ Erro no teste semanal: {e}")
+            self.logger.error(f"❌ Erro ao enviar e-mail diário: {e}")
     
-    def setup_schedule(self):
-        """Configura agendamentos"""
+    def _send_error_notification(self, error_type: str, error_message: str) -> None:
+        """
+        Envia notificação de erro
+        
+        Args:
+            error_type: Tipo do erro
+            error_message: Mensagem de erro
+        """
         try:
-            # Coleta diária
-            schedule.every().day.at(self.daily_time).do(self.daily_collection_job)
-            logger.info(f"📅 Coleta diária agendada para {self.daily_time}")
+            if not self.email_manager:
+                self.logger.warning("⚠️ EmailManager não inicializado - pulando notificação de erro")
+                return
             
-            # Teste semanal das fontes (segunda-feira às 06:00)
-            schedule.every().monday.at("06:00").do(self.weekly_source_test_job)
-            logger.info("📅 Teste semanal agendado para segunda-feira às 06:00")
+            subject = f"Erro - Insurance News Agent - {error_type}"
             
-            # Log de status a cada hora
-            schedule.every().hour.do(self.log_status)
+            html_content = f"""
+            <h2>Erro no Insurance News Agent</h2>
+            <p><strong>Tipo:</strong> {error_type}</p>
+            <p><strong>Data/Hora:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+            <p><strong>Mensagem:</strong></p>
+            <pre>{error_message}</pre>
+            """
             
+            success = self.email_manager.send_error_notification(
+                subject=subject,
+                html_content=html_content
+            )
+            
+            if success:
+                self.logger.info("✅ Notificação de erro enviada")
+            else:
+                self.logger.error("❌ Falha no envio da notificação de erro")
+                
         except Exception as e:
-            logger.error(f"❌ Erro ao configurar agendamentos: {e}")
+            self.logger.error(f"❌ Erro ao enviar notificação: {e}")
     
-    def log_status(self):
-        """Log de status do sistema"""
+    def _run_cleanup(self) -> None:
+        """Executa limpeza de arquivos antigos"""
+        self.logger.info("🧹 Iniciando limpeza de arquivos antigos")
+        
         try:
-            stats = self.agent.get_statistics()
-            logger.info(f"💓 Sistema ativo - {stats['total_sources']} fontes configuradas")
+            cleanup_date = datetime.now() - timedelta(days=self.config['cleanup_days'])
+            base_dir = Path(__file__).parent.parent
+            
+            # Diretórios para limpeza
+            cleanup_dirs = [
+                base_dir / 'data' / 'reports',
+                base_dir / 'logs',
+                base_dir / 'logs' / 'email',
+                base_dir / 'logs' / 'scrapers'
+            ]
+            
+            total_removed = 0
+            
+            for directory in cleanup_dirs:
+                if directory.exists():
+                    for file_path in directory.iterdir():
+                        if file_path.is_file():
+                            # Verificar se arquivo é antigo
+                            file_time = datetime.fromtimestamp(file_path.stat().st_mtime)
+                            
+                            if file_time < cleanup_date:
+                                try:
+                                    file_path.unlink()
+                                    total_removed += 1
+                                    self.logger.debug(f"Removido: {file_path}")
+                                except Exception as e:
+                                    self.logger.warning(f"Erro ao remover {file_path}: {e}")
+            
+            self.logger.info(f"✅ Limpeza concluída: {total_removed} arquivos removidos")
+            
         except Exception as e:
-            logger.error(f"❌ Erro no log de status: {e}")
+            self.logger.error(f"❌ Erro durante limpeza: {e}")
     
-    def run(self):
-        """Executa o scheduler"""
-        logger.info("🚀 Iniciando Insurance News Scheduler")
+    def run_manual_collection(self) -> Dict[str, Any]:
+        """
+        Executa coleta manual (para testes ou execução sob demanda)
         
-        # Configura agendamentos
-        self.setup_schedule()
+        Returns:
+            Dict: Resultado da coleta
+        """
+        self.logger.info("🔧 Executando coleta manual")
         
-        # Cria diretórios necessários
-        Path('data/reports').mkdir(parents=True, exist_ok=True)
-        Path('logs').mkdir(parents=True, exist_ok=True)
-        Path('config').mkdir(parents=True, exist_ok=True)
+        try:
+            if not self.agent:
+                if not self.initialize_components():
+                    return {'success': False, 'error': 'Falha na inicialização dos componentes'}
+            
+            result = self.agent.collect_and_analyze_news()
+            
+            if result and result.get('success', False):
+                self.logger.info("✅ Coleta manual concluída com sucesso")
+            else:
+                self.logger.error("❌ Falha na coleta manual")
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Erro na coleta manual: {e}"
+            self.logger.error(f"❌ {error_msg}")
+            return {'success': False, 'error': error_msg}
+    
+    def start(self) -> None:
+        """Inicia o scheduler em thread separada"""
+        if self.is_running:
+            self.logger.warning("⚠️ Scheduler já está em execução")
+            return
         
-        # Log inicial
-        logger.info("📊 Scheduler configurado e em execução")
-        logger.info(f"⏰ Próxima execução: {schedule.next_run()}")
+        # Inicializar componentes
+        if not self.initialize_components():
+            self.logger.error("❌ Falha na inicialização - scheduler não iniciado")
+            return
         
-        # Loop principal
-        while True:
+        # Configurar agendamentos
+        self.setup_daily_schedule()
+        
+        # Iniciar thread do scheduler
+        self.is_running = True
+        self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
+        self.scheduler_thread.start()
+        
+        self.logger.info("🚀 Scheduler iniciado com sucesso")
+    
+    def stop(self) -> None:
+        """Para o scheduler"""
+        if not self.is_running:
+            self.logger.warning("⚠️ Scheduler não está em execução")
+            return
+        
+        self.is_running = False
+        schedule.clear()
+        
+        if self.scheduler_thread and self.scheduler_thread.is_alive():
+            self.scheduler_thread.join(timeout=5)
+        
+        self.logger.info("🛑 Scheduler parado")
+    
+    def _run_scheduler(self) -> None:
+        """Loop principal do scheduler"""
+        self.logger.info("📅 Loop do scheduler iniciado")
+        
+        while self.is_running:
             try:
                 schedule.run_pending()
-                time.sleep(60)  # Verifica a cada minuto
-                
-            except KeyboardInterrupt:
-                logger.info("⏹️ Scheduler interrompido pelo usuário")
-                break
-            
+                time.sleep(60)  # Verificar a cada minuto
             except Exception as e:
-                logger.error(f"❌ Erro no loop do scheduler: {e}")
-                time.sleep(300)  # Espera 5 minutos antes de tentar novamente
+                self.logger.error(f"❌ Erro no loop do scheduler: {e}")
+                time.sleep(60)
+        
+        self.logger.info("📅 Loop do scheduler finalizado")
+    
+    def get_next_run_time(self) -> Optional[datetime]:
+        """
+        Retorna o próximo horário de execução agendado
+        
+        Returns:
+            Optional[datetime]: Próximo horário de execução
+        """
+        jobs = schedule.get_jobs()
+        if not jobs:
+            return None
+        
+        next_run = min(job.next_run for job in jobs)
+        return next_run
+    
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Retorna status do scheduler
+        
+        Returns:
+            Dict: Status atual
+        """
+        next_run = self.get_next_run_time()
+        
+        return {
+            'is_running': self.is_running,
+            'next_run': next_run.isoformat() if next_run else None,
+            'scheduled_jobs': len(schedule.get_jobs()),
+            'agent_initialized': self.agent is not None,
+            'email_manager_initialized': self.email_manager is not None,
+            'collection_time': self.config['collection_time'],
+            'cleanup_days': self.config['cleanup_days']
+        }
 
 
 def main():
-    """Função principal"""
-    # Configuração de ambiente
-    os.environ.setdefault('TZ', 'America/Sao_Paulo')
+    """Função principal para execução do scheduler"""
+    # Configurar logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+    )
     
-    # Inicia scheduler
-    scheduler = InsuranceNewsScheduler()
-    scheduler.run()
+    # Criar e iniciar scheduler
+    scheduler = NewsScheduler()
+    
+    try:
+        scheduler.start()
+        
+        # Manter o programa rodando
+        while True:
+            time.sleep(60)
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Interrompido pelo usuário")
+        scheduler.stop()
+    except Exception as e:
+        print(f"\n❌ Erro fatal: {e}")
+        scheduler.stop()
 
 
 if __name__ == "__main__":
     main()
-
