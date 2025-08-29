@@ -1,12 +1,19 @@
-# scheduler.py
+# scheduler.py (topo do arquivo)
 import os
-import time
-import subprocess
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+import sys
+from pathlib import Path
 
-from src.utils.logger import get_logger
-from main import InsuranceNewsAgent  # importa seu agente
+BASE_DIR = Path(__file__).resolve().parent
+# garante que a raiz e a pasta src estejam no PYTHONPATH
+sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR / "src"))
+
+try:
+    # caso main.py esteja na raiz do repo
+    from main import InsuranceNewsAgent
+except ModuleNotFoundError:
+    # fallback: caso main.py esteja em src/main.py
+    from src.main import InsuranceNewsAgent
 
 logger = get_logger("scheduler")
 
