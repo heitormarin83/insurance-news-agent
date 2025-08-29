@@ -1,325 +1,307 @@
 """
-Utilitário para configuração de ambiente e variáveis
+Configuração de ambiente para o Insurance News Agent
+Versão corrigida - SEM OAuth, apenas SMTP
 """
 
 import os
-import json
+import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
+import yaml
 
-from src.utils.logger import get_logger
-
-logger = get_logger("environment")
-
-
-class EnvironmentConfig:
-    """Gerenciador de configuração de ambiente"""
+class EnvironmentSetup:
+    """Classe para configuração do ambiente do sistema"""
     
     def __init__(self):
-        """Inicializa configuração de ambiente"""
-        self.is_production = self._detect_production()
-        self.is_railway = self._detect_railway()
+        self.logger = logging.getLogger(__name__)
+        self.base_dir = Path(__file__).parent.parent.parent
         
-        logger.info(f"Ambiente detectado - Produção: {self.is_production}, Railway: {self.is_railway}")
-    
-    def _detect_production(self) -> bool:
-        """Detecta se está em ambiente de produção"""
-        return (
-            os.getenv('FLASK_DEBUG', 'false').lower() == 'false' and
-            os.getenv('RAILWAY_ENVIRONMENT') == 'production'
-        )
-    
-    def _detect_railway(self) -> bool:
-        """Detecta se está rodando no Railway"""
-        return 'RAILWAY_ENVIRONMENT' in os.environ
-    
-    def setup_gmail_credentials(self) -> bool:
+    def initialize_environment(self) -> bool:
         """
-        Configura credenciais do Gmail a partir de variáveis de ambiente
+        Inicializa o ambiente completo do sistema
         
         Returns:
-            True se configuração bem-sucedida
+            bool: True se inicialização foi bem-sucedida
         """
         try:
-            config_dir = Path('config')
-            config_dir.mkdir(exist_ok=True)
-            
-            # Configura credentials.json
-            gmail_credentials = os.getenv('GMAIL_CREDENTIALS')
-            if gmail_credentials:
-                credentials_path = config_dir / 'credentials.json'
-                
-                # Parse JSON se for string
-                if isinstance(gmail_credentials, str):
-                    credentials_data = json.loads(gmail_credentials)
-                else:
-                    credentials_data = gmail_credentials
-                
-                with open(credentials_path, 'w') as f:
-                    json.dump(credentials_data, f, indent=2)
-                
-                logger.info("✅ Credenciais Gmail configuradas")
-            else:
-                logger.warning("⚠️ GMAIL_CREDENTIALS não encontrado")
+            # 1. Criar diretórios necessários
+            if not self.setup_directories():
                 return False
+                
+            # 2. Configurar e-mail (SMTP apenas)
+            if not self.setup_email_config():
+                return False
+                
+            # 3. Validar configuração
+            validation_result = self.validate_configuration()
             
-            # Configura token.json se disponível
-            gmail_token = os.getenv('GMAIL_TOKEN')
-            if gmail_token:
-                token_path = config_dir / 'token.json'
-                
-                # Parse JSON se for string
-                if isinstance(gmail_token, str):
-                    token_data = json.loads(gmail_token)
-                else:
-                    token_data = gmail_token
-                
-                with open(token_path, 'w') as f:
-                    json.dump(token_data, f, indent=2)
-                
-                logger.info("✅ Token Gmail configurado")
+            # 4. Exibir resumo
+            self.display_config_summary(validation_result)
             
+            return validation_result['is_valid']
+            
+        except Exception as e:
+            self.logger.error(f"Erro na inicialização do ambiente: {e}")
+            return False
+    
+    def setup_directories(self) -> bool:
+        """
+        Cria todos os diretórios necessários para o sistema
+        
+        Returns:
+            bool: True se todos os diretórios foram criados
+        """
+        directories = [
+            'config',
+            'data',
+            'data/reports',
+            'data/deduplication',  # Novo: para sistema de deduplicação
+            'logs',
+            'logs/email',
+            'logs/scrapers',
+            'logs/analyzers'
+        ]
+        
+        try:
+            for directory in directories:
+                dir_path = self.base_dir / directory
+                dir_path.mkdir(parents=True, exist_ok=True)
+                self.logger.debug(f"Diretório criado/verificado: {dir_path}")
+            
+            self.logger.info(f"✅ {len(directories)} diretórios criados/verificados com sucesso")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Erro ao configurar credenciais Gmail: {e}")
+            self.logger.error(f"Erro ao criar diretórios: {e}")
             return False
     
     def setup_email_config(self) -> bool:
         """
-        Configura arquivo de e-mail a partir de variáveis de ambiente
+        Configura o sistema de e-mail usando SMTP (sem OAuth)
         
         Returns:
-            True se configuração bem-sucedida
+            bool: True se configuração foi criada
         """
         try:
-            import yaml
+            config_path = self.base_dir / 'config' / 'email_config.yaml'
             
-            # Obtém destinatários das variáveis de ambiente
-            daily_recipients = self._parse_email_list('EMAIL_RECIPIENTS_DAILY')
-            alert_recipients = self._parse_email_list('EMAIL_RECIPIENTS_ALERTS')
-            error_recipients = self._parse_email_list('EMAIL_RECIPIENTS_ERRORS')
-            
-            # Configuração de e-mail
+            # Configuração SMTP baseada em variáveis de ambiente
             email_config = {
-                'recipients': {
-                    'daily_report': daily_recipients,
-                    'alerts': alert_recipients,
-                    'errors': error_recipients
-                },
-                'sending': {
-                    'daily_report_time': os.getenv('DAILY_COLLECTION_TIME', '08:00'),
-                    'timezone': os.getenv('TIMEZONE', 'America/Sao_Paulo'),
-                    'weekdays_only': True,
-                    'immediate_open_insurance_alerts': os.getenv('ENABLE_OPEN_INSURANCE_ALERTS', 'true').lower() == 'true',
-                    'alert_relevance_threshold': float(os.getenv('RELEVANCE_THRESHOLD', '0.7'))
-                },
-                'gmail': {
-                    'credentials_file': 'config/credentials.json',
-                    'token_file': 'config/token.json',
+                'smtp': {
+                    'server': 'smtp.gmail.com',
+                    'port': 587,
+                    'use_tls': True,
                     'sender_name': 'Insurance News Agent'
                 },
+                'recipients': {
+                    'daily_report': self._parse_email_list(os.getenv('EMAIL_RECIPIENTS_DAILY', '')),
+                    'alerts': self._parse_email_list(os.getenv('EMAIL_RECIPIENTS_ALERTS', '')),
+                    'errors': self._parse_email_list(os.getenv('EMAIL_RECIPIENTS_ERRORS', ''))
+                },
                 'templates': {
-                    'include_detailed_stats': True,
-                    'max_top_articles': int(os.getenv('MAX_TOP_ARTICLES', '10')),
-                    'max_open_insurance_articles': 5,
-                    'include_article_summaries': True,
-                    'max_summary_length': 200
-                },
-                'retry': {
-                    'max_attempts': 3,
-                    'delay_between_attempts': 60,
-                    'notify_on_failure': True
-                },
-                'logging': {
-                    'save_email_logs': True,
-                    'log_directory': 'logs/email',
-                    'log_retention_days': int(os.getenv('LOG_RETENTION_DAYS', '30'))
+                    'daily_report': {
+                        'subject': 'Relatório Diário - Notícias de Seguros - {date}',
+                        'template_file': 'daily_report_template.html'
+                    },
+                    'alert': {
+                        'subject': 'Alerta - Insurance News Agent - {alert_type}',
+                        'template_file': 'alert_template.html'
+                    },
+                    'error': {
+                        'subject': 'Erro - Insurance News Agent - {error_type}',
+                        'template_file': 'error_template.html'
+                    }
                 }
             }
             
-            # Salva configuração
-            config_path = Path('config/email_config.yaml')
-            config_path.parent.mkdir(exist_ok=True)
+            # Salvar configuração
+            with open(config_path, 'w', encoding='utf-8') as file:
+                yaml.dump(email_config, file, default_flow_style=False, allow_unicode=True)
             
-            with open(config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(email_config, f, default_flow_style=False, allow_unicode=True)
+            # Contar destinatários configurados
+            total_recipients = len(email_config['recipients']['daily_report'])
             
-            logger.info(f"✅ Configuração de e-mail criada: {len(daily_recipients)} destinatários diários")
+            self.logger.info(f"✅ Configuração de e-mail criada: {total_recipients} destinatários diários")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Erro ao configurar e-mail: {e}")
+            self.logger.error(f"Erro ao configurar e-mail: {e}")
             return False
     
-    def _parse_email_list(self, env_var: str) -> list:
+    def _parse_email_list(self, email_string: str) -> List[str]:
         """
-        Parse lista de e-mails de variável de ambiente
+        Converte string de e-mails separados por vírgula em lista
         
         Args:
-            env_var: Nome da variável de ambiente
+            email_string: String com e-mails separados por vírgula
             
         Returns:
-            Lista de e-mails
+            List[str]: Lista de e-mails válidos
         """
-        email_string = os.getenv(env_var, '')
         if not email_string:
             return []
         
-        emails = [email.strip() for email in email_string.split(',') if email.strip()]
-        return emails
-    
-    def setup_directories(self):
-        """Cria diretórios necessários"""
-        directories = [
-            'config',
-            'data/reports',
-            'logs',
-            'logs/email'
-        ]
-        
-        for directory in directories:
-            Path(directory).mkdir(parents=True, exist_ok=True)
-        
-        logger.info("✅ Diretórios criados")
-    
-    def get_config_summary(self) -> Dict[str, Any]:
-        """
-        Retorna resumo da configuração
-        
-        Returns:
-            Dicionário com resumo da configuração
-        """
-        return {
-            'environment': {
-                'is_production': self.is_production,
-                'is_railway': self.is_railway,
-                'timezone': os.getenv('TIMEZONE', 'America/Sao_Paulo'),
-                'daily_time': os.getenv('DAILY_COLLECTION_TIME', '08:00')
-            },
-            'email': {
-                'enabled': os.getenv('ENABLE_EMAIL', 'true').lower() == 'true',
-                'daily_recipients': len(self._parse_email_list('EMAIL_RECIPIENTS_DAILY')),
-                'alert_recipients': len(self._parse_email_list('EMAIL_RECIPIENTS_ALERTS')),
-                'error_recipients': len(self._parse_email_list('EMAIL_RECIPIENTS_ERRORS'))
-            },
-            'collection': {
-                'max_articles_per_source': int(os.getenv('MAX_ARTICLES_PER_SOURCE', '50')),
-                'relevance_threshold': float(os.getenv('RELEVANCE_THRESHOLD', '0.5')),
-                'open_insurance_alerts': os.getenv('ENABLE_OPEN_INSURANCE_ALERTS', 'true').lower() == 'true'
-            },
-            'logging': {
-                'level': os.getenv('LOG_LEVEL', 'INFO'),
-                'retention_days': int(os.getenv('LOG_RETENTION_DAYS', '30'))
-            }
-        }
+        emails = [email.strip() for email in email_string.split(',')]
+        return [email for email in emails if email and '@' in email]
     
     def validate_configuration(self) -> Dict[str, Any]:
         """
-        Valida configuração do ambiente
+        Valida a configuração completa do sistema
         
         Returns:
-            Resultado da validação
+            Dict: Resultado da validação com detalhes
         """
-        issues = []
-        warnings = []
+        validation = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'smtp_configured': False,
+            'recipients_count': 0
+        }
         
-        # Verifica credenciais Gmail
-        if not os.getenv('GMAIL_CREDENTIALS'):
-            issues.append("GMAIL_CREDENTIALS não configurado")
+        # Validar variáveis de ambiente SMTP
+        gmail_email = os.getenv('GMAIL_EMAIL')
+        gmail_password = os.getenv('GMAIL_APP_PASSWORD')
         
-        # Verifica destinatários de e-mail
-        if not self._parse_email_list('EMAIL_RECIPIENTS_DAILY'):
-            warnings.append("Nenhum destinatário para relatório diário")
+        if gmail_email and gmail_password:
+            validation['smtp_configured'] = True
+            self.logger.info("✅ SMTP configurado corretamente")
+        else:
+            validation['warnings'].append("SMTP não configurado - e-mails não serão enviados")
+            if not gmail_email:
+                validation['warnings'].append("GMAIL_EMAIL não configurado")
+            if not gmail_password:
+                validation['warnings'].append("GMAIL_APP_PASSWORD não configurado")
         
-        if not self._parse_email_list('EMAIL_RECIPIENTS_ERRORS'):
-            warnings.append("Nenhum destinatário para erros")
+        # Validar destinatários
+        daily_recipients = self._parse_email_list(os.getenv('EMAIL_RECIPIENTS_DAILY', ''))
+        validation['recipients_count'] = len(daily_recipients)
         
-        # Verifica configurações numéricas
+        if not daily_recipients:
+            validation['warnings'].append("Nenhum destinatário configurado para relatórios diários")
+        
+        # Validar configurações numéricas
         try:
-            float(os.getenv('RELEVANCE_THRESHOLD', '0.5'))
-        except ValueError:
-            issues.append("RELEVANCE_THRESHOLD deve ser um número")
+            max_articles = int(os.getenv('MAX_ARTICLES_PER_SOURCE', '50'))
+            if max_articles <= 0:
+                validation['errors'].append("MAX_ARTICLES_PER_SOURCE deve ser maior que 0")
+        except (ValueError, TypeError):
+            validation['warnings'].append("MAX_ARTICLES_PER_SOURCE inválido, usando padrão (50)")
         
-        try:
-            int(os.getenv('MAX_ARTICLES_PER_SOURCE', '50'))
-        except ValueError:
-            issues.append("MAX_ARTICLES_PER_SOURCE deve ser um número")
+        # Determinar se configuração é válida
+        if validation['errors']:
+            validation['is_valid'] = False
+        
+        return validation
+    
+    def display_config_summary(self, validation: Dict[str, Any]) -> None:
+        """
+        Exibe resumo da configuração do sistema
+        
+        Args:
+            validation: Resultado da validação
+        """
+        print("\n" + "="*60)
+        print("🔧 RESUMO DA CONFIGURAÇÃO - INSURANCE NEWS AGENT")
+        print("="*60)
+        
+        # Status geral
+        status = "✅ VÁLIDA" if validation['is_valid'] else "❌ INVÁLIDA"
+        print(f"Status: {status}")
+        
+        # Configuração SMTP
+        smtp_status = "✅ Configurado" if validation['smtp_configured'] else "⚠️ Não configurado"
+        print(f"SMTP: {smtp_status}")
+        
+        # Destinatários
+        recipients_count = validation['recipients_count']
+        print(f"Destinatários: {recipients_count} configurados")
+        
+        # Variáveis de ambiente
+        print(f"\n📧 VARIÁVEIS DE AMBIENTE:")
+        env_vars = [
+            ('GMAIL_EMAIL', os.getenv('GMAIL_EMAIL', 'Não configurado')),
+            ('GMAIL_APP_PASSWORD', '***' if os.getenv('GMAIL_APP_PASSWORD') else 'Não configurado'),
+            ('EMAIL_RECIPIENTS_DAILY', os.getenv('EMAIL_RECIPIENTS_DAILY', 'Não configurado')),
+            ('EMAIL_RECIPIENTS_ALERTS', os.getenv('EMAIL_RECIPIENTS_ALERTS', 'Não configurado')),
+            ('EMAIL_RECIPIENTS_ERRORS', os.getenv('EMAIL_RECIPIENTS_ERRORS', 'Não configurado'))
+        ]
+        
+        for var_name, var_value in env_vars:
+            print(f"  {var_name}: {var_value}")
+        
+        # Avisos
+        if validation['warnings']:
+            print(f"\n⚠️ AVISOS ({len(validation['warnings'])}):")
+            for warning in validation['warnings']:
+                print(f"  • {warning}")
+        
+        # Erros
+        if validation['errors']:
+            print(f"\n❌ ERROS ({len(validation['errors'])}):")
+            for error in validation['errors']:
+                print(f"  • {error}")
+        
+        print("="*60)
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """
+        Retorna resumo da configuração para uso programático
+        
+        Returns:
+            Dict: Resumo da configuração
+        """
+        validation = self.validate_configuration()
         
         return {
-            'valid': len(issues) == 0,
-            'issues': issues,
-            'warnings': warnings,
-            'config_summary': self.get_config_summary()
+            'environment_valid': validation['is_valid'],
+            'smtp_configured': validation['smtp_configured'],
+            'recipients_count': validation['recipients_count'],
+            'errors_count': len(validation['errors']),
+            'warnings_count': len(validation['warnings']),
+            'base_directory': str(self.base_dir),
+            'config_files': {
+                'email_config': (self.base_dir / 'config' / 'email_config.yaml').exists(),
+                'sources_config': (self.base_dir / 'config' / 'sources.yaml').exists(),
+                'news_analyzer_config': (self.base_dir / 'config' / 'news_analyzer_config.yaml').exists()
+            }
         }
-    
-    def initialize_environment(self) -> bool:
-        """
-        Inicializa ambiente completo
-        
-        Returns:
-            True se inicialização bem-sucedida
-        """
-        try:
-            logger.info("🚀 Inicializando ambiente...")
-            
-            # Cria diretórios
-            self.setup_directories()
-            
-            # Configura credenciais Gmail
-            gmail_success = self.setup_gmail_credentials()
-            
-            # Configura e-mail
-            email_success = self.setup_email_config()
-            
-            # Valida configuração
-            validation = self.validate_configuration()
-            
-            if validation['issues']:
-                logger.error(f"❌ Problemas na configuração: {validation['issues']}")
-                return False
-            
-            if validation['warnings']:
-                logger.warning(f"⚠️ Avisos: {validation['warnings']}")
-            
-            logger.info("✅ Ambiente inicializado com sucesso")
-            return gmail_success and email_success
-            
-        except Exception as e:
-            logger.error(f"❌ Erro na inicialização do ambiente: {e}")
-            return False
-
-
-# Instância global
-env_config = EnvironmentConfig()
 
 
 def initialize_environment() -> bool:
     """
-    Função de conveniência para inicializar ambiente
+    Função principal para inicializar o ambiente
     
     Returns:
-        True se inicialização bem-sucedida
+        bool: True se inicialização foi bem-sucedida
     """
-    return env_config.initialize_environment()
+    setup = EnvironmentSetup()
+    return setup.initialize_environment()
 
 
-def get_config_summary() -> Dict[str, Any]:
+def get_environment_summary() -> Dict[str, Any]:
     """
-    Função de conveniência para obter resumo da configuração
+    Retorna resumo do ambiente configurado
     
     Returns:
-        Resumo da configuração
+        Dict: Resumo da configuração
     """
-    return env_config.get_config_summary()
+    setup = EnvironmentSetup()
+    return setup.get_config_summary()
 
 
-def validate_environment() -> Dict[str, Any]:
-    """
-    Função de conveniência para validar ambiente
+if __name__ == "__main__":
+    # Configurar logging para execução direta
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+    )
     
-    Returns:
-        Resultado da validação
-    """
-    return env_config.validate_configuration()
-
+    # Inicializar ambiente
+    success = initialize_environment()
+    
+    if success:
+        print("\n🎉 Ambiente inicializado com sucesso!")
+    else:
+        print("\n❌ Falha na inicialização do ambiente!")
+        exit(1)
