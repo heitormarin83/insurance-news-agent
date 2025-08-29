@@ -1,115 +1,200 @@
-name: Daily Insurance News Collection
+name: Daily News Collection
 
 on:
   schedule:
+    # Executa diariamente às 7:00 UTC (4:00 AM BRT)
     - cron: '0 7 * * *'
   workflow_dispatch:
-    inputs:
-      send_email:
-        description: 'Enviar e-mail após coleta'
-        required: false
-        default: 'true'
-        type: boolean
-      test_mode:
-        description: 'Modo de teste (não envia e-mails)'
-        required: false
-        default: 'false'
-        type: boolean
+    # Permite execução manual
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
 
 jobs:
-  collect-and-send:
+  collect-news:
     runs-on: ubuntu-latest
-    env:
-      GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
-      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
-      EMAIL_RECIPIENTS_ALERTS: ${{ secrets.EMAIL_RECIPIENTS_ALERTS }}
-      EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
-
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-
+      
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-        cache: 'pip'
-
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-
-    - name: Create config directories
+        
+    - name: Create necessary directories
       run: |
         mkdir -p config
         mkdir -p data/reports
         mkdir -p data/deduplication
         mkdir -p logs
-
-    - name: Setup email configuration
+        mkdir -p logs/email
+        
+    - name: Setup environment variables
       run: |
-        python scripts/setup_email_config.py
-
+        echo "Setting up environment variables..."
+        echo "GMAIL_EMAIL=${{ secrets.GMAIL_EMAIL }}" >> $GITHUB_ENV
+        echo "GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }}" >> $GITHUB_ENV
+        echo "EMAIL_RECIPIENTS_DAILY=${{ secrets.EMAIL_RECIPIENTS_DAILY }}" >> $GITHUB_ENV
+        echo "EMAIL_RECIPIENTS_ALERTS=${{ secrets.EMAIL_RECIPIENTS_ALERTS }}" >> $GITHUB_ENV
+        echo "EMAIL_RECIPIENTS_ERRORS=${{ secrets.EMAIL_RECIPIENTS_ERRORS }}" >> $GITHUB_ENV
+        
+    - name: Initialize environment
+      run: |
+        echo "Initializing environment..."
+        python -c "
+        import sys
+        sys.path.append('.')
+        from src.utils.environment import initialize_environment
+        success = initialize_environment()
+        print(f'Environment initialization: {\"✅ Success\" if success else \"❌ Failed\"}')
+        exit(0 if success else 1)
+        "
+        
     - name: Run news collection
       id: collection
       run: |
-        cd $GITHUB_WORKSPACE
-        export PYTHONPATH=$GITHUB_WORKSPACE:$PYTHONPATH
-        python src/main.py --action collect > collection_output.log 2>&1
-        echo "collection_status=$?" >> $GITHUB_OUTPUT
+        echo "Starting news collection..."
+        python src/main.py 2>&1 | tee collection_output.log
         
+        # Verificar se o relatório foi gerado (NOME CORRETO)
         REPORT_PATH="data/reports/daily_report_$(date +%Y-%m-%d).json"
+        
         if [ -f "$REPORT_PATH" ]; then
           echo "report_generated=true" >> $GITHUB_OUTPUT
-          TOTAL_ARTICLES=$(python -c "import json; data=json.load(open('$REPORT_PATH')); print(data['total_articles'])")
-          OPEN_INSURANCE=$(python -c "import json; data=json.load(open('$REPORT_PATH')); print(len(data.get('open_insurance_articles', [])))")
+          
+          # Extrair estatísticas do relatório JSON
+          TOTAL_ARTICLES=$(python -c "
+          import json
+          try:
+              with open('$REPORT_PATH', 'r') as f:
+                  data = json.load(f)
+              print(data.get('total_articles', 0))
+          except:
+              print(0)
+          ")
+          
+          DUPLICATES_REMOVED=$(python -c "
+          import json
+          try:
+              with open('$REPORT_PATH', 'r') as f:
+                  data = json.load(f)
+              print(data.get('duplicates_removed', 0))
+          except:
+              print(0)
+          ")
+          
+          TOP_ARTICLES_COUNT=$(python -c "
+          import json
+          try:
+              with open('$REPORT_PATH', 'r') as f:
+                  data = json.load(f)
+              print(len(data.get('top_articles', [])))
+          except:
+              print(0)
+          ")
+          
           echo "total_articles=$TOTAL_ARTICLES" >> $GITHUB_OUTPUT
-          echo "open_insurance_articles=$OPEN_INSURANCE" >> $GITHUB_OUTPUT
+          echo "duplicates_removed=$DUPLICATES_REMOVED" >> $GITHUB_OUTPUT
+          echo "top_articles_count=$TOP_ARTICLES_COUNT" >> $GITHUB_OUTPUT
+          
+          echo "✅ Relatório gerado com sucesso: $TOTAL_ARTICLES artigos coletados"
+          echo "🔄 Duplicatas removidas: $DUPLICATES_REMOVED"
+          echo "⭐ Artigos principais selecionados: $TOP_ARTICLES_COUNT"
         else
           echo "report_generated=false" >> $GITHUB_OUTPUT
+          echo "total_articles=0" >> $GITHUB_OUTPUT
+          echo "duplicates_removed=0" >> $GITHUB_OUTPUT
+          echo "top_articles_count=0" >> $GITHUB_OUTPUT
+          echo "❌ Relatório não foi gerado"
         fi
-
-    - name: Send daily report email
-      if: steps.collection.outputs.collection_status == '0' && (github.event.inputs.send_email != 'false' && github.event.inputs.test_mode != 'true')
+        
+    - name: Send daily email
+      if: steps.collection.outputs.report_generated == 'true'
       run: |
-        python scripts/send_daily_email.py
-
+        echo "Sending daily email report..."
+        python scripts/send_daily_email.py 2>&1 | tee email_output.log
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ E-mail enviado com sucesso"
+        else
+          echo "❌ Falha no envio do e-mail"
+        fi
+        
     - name: Send error notification
-      if: steps.collection.outputs.collection_status != '0'
-      env:
-        ERROR_LOG: collection_output.log
+      if: failure()
       run: |
-        python scripts/send_error_notification.py
-
-    - name: Upload reports as artifacts
+        echo "Sending error notification..."
+        python scripts/send_error_notification.py "GitHub Actions Workflow Failed" "$(cat collection_output.log | tail -20)" 2>&1 | tee error_notification.log || true
+        
+    - name: Upload artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
-        name: daily-reports-${{ github.run_number }}
+        name: collection-results-${{ github.run_number }}
         path: |
           data/reports/
+          data/deduplication/
           logs/
           collection_output.log
+          email_output.log
+          error_notification.log
         retention-days: 30
-
-    - name: Update job summary
+        
+    - name: Update workflow summary
       if: always()
       run: |
-        echo "## 📊 Relatório de Execução - $(date '+%d/%m/%Y')" >> $GITHUB_STEP_SUMMARY
+        echo "## 📊 Resumo da Coleta de Notícias" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.collection.outputs.collection_status }}" == "0" ]; then
-          echo "✅ **Status**: Coleta executada com sucesso" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.collection.outputs.report_generated }}" == "true" ]; then
-            echo "📈 **Artigos coletados**: ${{ steps.collection.outputs.total_articles }}" >> $GITHUB_STEP_SUMMARY
-            echo "🔓 **Open Insurance**: ${{ steps.collection.outputs.open_insurance_articles }}" >> $GITHUB_STEP_SUMMARY
-          fi
+        echo "**Data**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.collection.outputs.report_generated }}" == "true" ]; then
+          echo "✅ **Status**: Coleta realizada com sucesso" >> $GITHUB_STEP_SUMMARY
+          echo "📰 **Total de artigos**: ${{ steps.collection.outputs.total_articles }}" >> $GITHUB_STEP_SUMMARY
+          echo "⭐ **Artigos principais**: ${{ steps.collection.outputs.top_articles_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "🔄 **Duplicatas removidas**: ${{ steps.collection.outputs.duplicates_removed }}" >> $GITHUB_STEP_SUMMARY
         else
-          echo "❌ **Status**: Erro na coleta" >> $GITHUB_STEP_SUMMARY
+          echo "❌ **Status**: Falha na coleta" >> $GITHUB_STEP_SUMMARY
+          echo "📰 **Total de artigos**: 0" >> $GITHUB_STEP_SUMMARY
         fi
+        
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "🕐 **Horário de execução**: $(date '+%d/%m/%Y às %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
-          echo "🧪 **Modo**: Teste (e-mails não enviados)" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Detalhes da Execução" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        
+        # Adicionar logs de erro se houver falha
+        if [ "${{ job.status }}" != "success" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ Logs de Erro" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 collection_output.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Logs não disponíveis" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
         fi
+        
+    - name: Cleanup old artifacts
+      run: |
+        echo "Cleaning up old report files..."
+        find data/reports/ -name "daily_report_*.html" -mtime +7 -delete 2>/dev/null || true
+        find data/reports/ -name "daily_report_*.json" -mtime +7 -delete 2>/dev/null || true
+        find logs/ -name "*.log" -mtime +7 -delete 2>/dev/null || true
+        echo "✅ Cleanup completed"
