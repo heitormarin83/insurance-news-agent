@@ -82,7 +82,17 @@ def run_once():
         result = agent.run_daily_collection()
         logger.info(f"✅ Coleta OK: {result['unique_articles_after_dedup']} únicos "
                     f"(dup removidas: {result['duplicates_removed']})")
-        ok_email = send_daily_email_via_script()
+        # pegue os caminhos que o agente acabou de salvar
+        report_html = result.get("html_report_path")
+        report_json = result.get("json_report_path")
+        report_path = report_html or report_json
+
+if report_path:
+    ok_email = send_daily_email_via_script(report_path)
+else:
+    logger.warning("⚠️ Não encontrei report_path no resultado. Vou tentar o auto-detect do sender.")
+    ok_email = send_daily_email_via_script(None)
+
         if not ok_email:
             logger.warning("⚠️ E-mail diário não enviado (verifique credenciais/recipients).")
     except Exception as e:
