@@ -1,25 +1,20 @@
-name: Debug: Send last report (manual)
+name: Debug: Generate & Send report (manual)
 
 on:
-  workflow_dispatch:
-    inputs:
-      report_path:
-        description: "Opcional: caminho do relatório (HTML/JSON). Ex.: data/reports/daily_report_2025-09-01.html"
-        required: false
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
-  send:
+  run:
     runs-on: ubuntu-latest
     env:
       TZ: America/Sao_Paulo
+      # Secrets (só precisa se quiser ENVIAR por e-mail neste teste)
       GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
-      EMAIL_RECIPIENTS_ALERTS: ${{ secrets.EMAIL_RECIPIENTS_ALERTS }}
-      EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
 
     steps:
       - name: Checkout
@@ -35,42 +30,41 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Guard: secrets presentes?
-        if: ${{ env.GMAIL_EMAIL == '' || env.GMAIL_APP_PASSWORD == '' || env.EMAIL_RECIPIENTS_DAILY == '' }}
-        run: |
-          echo "::error::Faltam secrets. Defina GMAIL_EMAIL, GMAIL_APP_PASSWORD e EMAIL_RECIPIENTS_DAILY em Settings → Secrets and variables → Actions."
-          exit 1
+      # 1) Gera o relatório agora
+      - name: Generate report
+        run: python -u src/main.py --action collect
 
-      # Resolve o caminho do relatório (usa input se veio; senão, o mais recente da pasta)
-      - name: Resolve report path
+      # 2) Descobre o arquivo mais recente em data/reports/
+      - name: Resolve latest report path
         id: rp
         shell: bash
         run: |
-          if [[ -n "${{ github.event.inputs.report_path }}" ]]; then
-            echo "path=${{ github.event.inputs.report_path }}" >> "$GITHUB_OUTPUT"
-          else
-            RP="$(ls -t data/reports/* 2>/dev/null | head -1 || true)"
-            echo "path=$RP" >> "$GITHUB_OUTPUT"
+          RP="$(ls -t data/reports/* 2>/dev/null | head -1 || true)"
+          echo "path=$RP" >> "$GITHUB_OUTPUT"
+          if [[ -z "$RP" ]]; then
+            echo "::warning::Nenhum arquivo encontrado em data/reports/"
           fi
 
-      - name: Mostrar report
-        run: echo "Report: ${{ steps.rp.outputs.path }}"
+      # 3) (Opcional) Envia por e-mail – só roda se houver secrets e arquivo
+      - name: Send email
+        if: ${{ steps.rp.outputs.path != '' && env.GMAIL_EMAIL != '' && env.GMAIL_APP_PASSWORD != '' && env.EMAIL_RECIPIENTS_DAILY != '' }}
+        run: python -u scripts/send_daily_email.py --report "${{ steps.rp.outputs.path }}"
 
-      - name: Enviar e-mail
-        shell: bash
-        run: |
-          if [[ -n "${{ steps.rp.outputs.path }}" ]]; then
-            python -u scripts/send_daily_email.py --report "${{ steps.rp.outputs.path }}"
-          else
-            echo "::warning::Nenhum arquivo encontrado; tentando fallback do script."
-            python -u scripts/send_daily_email.py
-          fi
-
-      - name: Upload do relatório (artifact)
+      # 4) Publica o arquivo como Artifact para download na UI
+      - name: Upload latest report
         if: ${{ steps.rp.outputs.path != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: latest-report
           path: ${{ steps.rp.outputs.path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      # (Opcional) Também sobe a pasta inteira de reports
+      - name: Upload reports folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-folder
+          path: data/reports
           if-no-files-found: warn
           retention-days: 7
