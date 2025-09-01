@@ -1,7 +1,7 @@
-name: Debug: Generate & Send report (manual)
+name: "Debug Generate and Send report (manual)"
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: America/Sao_Paulo
-      # Secrets (só precisa se quiser ENVIAR por e-mail neste teste)
       GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
@@ -30,27 +29,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 1) Gera o relatório agora
       - name: Generate report
         run: python -u src/main.py --action collect
 
-      # 2) Descobre o arquivo mais recente em data/reports/
       - name: Resolve latest report path
         id: rp
         shell: bash
         run: |
           RP="$(ls -t data/reports/* 2>/dev/null | head -1 || true)"
           echo "path=$RP" >> "$GITHUB_OUTPUT"
-          if [[ -z "$RP" ]]; then
-            echo "::warning::Nenhum arquivo encontrado em data/reports/"
+          if [ -z "$RP" ]; then
+            echo "::warning::No files found in data/reports"
           fi
 
-      # 3) (Opcional) Envia por e-mail – só roda se houver secrets e arquivo
-      - name: Send email
+      - name: Send email (optional)
         if: ${{ steps.rp.outputs.path != '' && env.GMAIL_EMAIL != '' && env.GMAIL_APP_PASSWORD != '' && env.EMAIL_RECIPIENTS_DAILY != '' }}
         run: python -u scripts/send_daily_email.py --report "${{ steps.rp.outputs.path }}"
 
-      # 4) Publica o arquivo como Artifact para download na UI
       - name: Upload latest report
         if: ${{ steps.rp.outputs.path != '' }}
         uses: actions/upload-artifact@v4
@@ -60,8 +55,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # (Opcional) Também sobe a pasta inteira de reports
-      - name: Upload reports folder
+      - name: Upload reports folder (optional)
         uses: actions/upload-artifact@v4
         with:
           name: reports-folder
