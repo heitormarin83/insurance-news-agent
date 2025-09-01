@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       report_path:
-        description: "Opcional: caminho do relatório (HTML/JSON), ex.: data/reports/daily_report_2025-09-01.html"
+        description: "Opcional: caminho do relatório (HTML/JSON). Ex.: data/reports/daily_report_2025-09-01.html"
         required: false
-        default: ""
 
 permissions:
   contents: read
@@ -16,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: America/Sao_Paulo
-      # Secrets temporários para o teste manual
       GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       EMAIL_RECIPIENTS_DAILY: ${{ secrets.EMAIL_RECIPIENTS_DAILY }}
       EMAIL_RECIPIENTS_ALERTS: ${{ secrets.EMAIL_RECIPIENTS_ALERTS }}
       EMAIL_RECIPIENTS_ERRORS: ${{ secrets.EMAIL_RECIPIENTS_ERRORS }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,47 +35,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Resolve report path
-        id: rp
-        shell: bash
-        run: |
-          INPUT="${{ github.event.inputs.report_path }}"
-          if [[ -n "$INPUT" && -f "$INPUT" ]]; then
-            echo "path=$INPUT" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          python - <<'PY' > rp.txt
-import glob, os, datetime
-from zoneinfo import ZoneInfo
-tz = ZoneInfo("America/Sao_Paulo")
-today = datetime.datetime.now(tz).strftime("%Y-%m-%d")
-patterns = [
-  f"data/reports/relatorio_seguros_{today}*.html",
-  f"data/reports/relatorio_seguros_{today}*.json",
-  f"data/reports/daily_report_{today}*.html",
-  f"data/reports/daily_report_{today}*.json",
-  "data/reports/*.*",
-]
-c=[]
-for p in patterns:
-    c.extend(glob.glob(p))
-print(max(c, key=os.path.getmtime) if c else "")
-PY
-
-          RP="$(tail -n1 rp.txt)"
-          echo "path=$RP" >> "$GITHUB_OUTPUT"
-
       - name: Guard: secrets presentes?
         if: ${{ env.GMAIL_EMAIL == '' || env.GMAIL_APP_PASSWORD == '' || env.EMAIL_RECIPIENTS_DAILY == '' }}
         run: |
           echo "::error::Faltam secrets. Defina GMAIL_EMAIL, GMAIL_APP_PASSWORD e EMAIL_RECIPIENTS_DAILY em Settings → Secrets and variables → Actions."
           exit 1
 
+      # Resolve o caminho do relatório (usa input se veio; senão, o mais recente da pasta)
+      - name: Resolve report path
+        id: rp
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.report_path }}" ]]; then
+            echo "path=${{ github.event.inputs.report_path }}" >> "$GITHUB_OUTPUT"
+          else
+            RP="$(ls -t data/reports/* 2>/dev/null | head -1 || true)"
+            echo "path=$RP" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Mostrar report
         run: echo "Report: ${{ steps.rp.outputs.path }}"
 
-      - name: Enviar e-mail (com report)
+      - name: Enviar e-mail
         shell: bash
         run: |
           if [[ -n "${{ steps.rp.outputs.path }}" ]]; then
@@ -85,3 +65,12 @@ PY
             echo "::warning::Nenhum arquivo encontrado; tentando fallback do script."
             python -u scripts/send_daily_email.py
           fi
+
+      - name: Upload do relatório (artifact)
+        if: ${{ steps.rp.outputs.path != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-report
+          path: ${{ steps.rp.outputs.path }}
+          if-no-files-found: warn
+          retention-days: 7
