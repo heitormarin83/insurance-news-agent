@@ -5,16 +5,20 @@ import time
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-# --- PATHS: garante que a raiz e a pasta src estejam no PYTHONPATH ---
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except Exception:
+    ZoneInfo = None  # fallback sem timezone
+
+# --- PATHS: garanta que raiz e src estejam no PYTHONPATH ---
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))           # /app
 sys.path.insert(0, str(BASE_DIR / "src"))   # /app/src
 
-# --- LOGGER: tenta importar o seu; se não, cria um básico ---
+# --- LOGGER: usa o do projeto; se faltar, cria um básico ---
 try:
-    from src.utils.logger import get_logger  # estrutura comum do seu repo
+    from src.utils.logger import get_logger
 except Exception:
     import logging
     def get_logger(name: str):
@@ -26,36 +30,43 @@ except Exception:
 
 logger = get_logger("scheduler")
 
-# --- AGENTE: tenta importar da raiz (main.py) ou de src/main.py ---
+# --- AGENTE: importa da raiz (main.py) ou de src/main.py ---
 try:
     from main import InsuranceNewsAgent     # se main.py estiver na raiz
 except ModuleNotFoundError:
     from src.main import InsuranceNewsAgent # se estiver em src/main.py
 
-# Configurações
-RUN_AT = os.getenv("RUN_AT", "06:15")
-TZ = os.getenv("TZ", "America/Sao_Paulo")
+# Configurações por ENV
+RUN_AT = os.getenv("RUN_AT", "06:15")                 # horário diário (BRT)
+TZ = os.getenv("TZ", "America/Sao_Paulo")             # fuso
+RUN_NOW = os.getenv("RUN_NOW", "").lower() in ("1", "true", "yes")  # executa já uma vez
 
 def parse_hhmm(s: str):
     try:
         hh, mm = s.split(":")
         return int(hh), int(mm)
     except Exception:
-        return 6, 15  # fallback
+        return 6, 15  # fallback 06:15
+
+def now_tz():
+    if ZoneInfo:
+        return datetime.now(ZoneInfo(TZ))
+    return datetime.now()
 
 def next_run(now, hh, mm):
     target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     if target <= now:
-        target = target + timedelta(days=1)
+        target += timedelta(days=1)
     return target
 
-def send_daily_email_via_script():
+def send_daily_email_via_script(report_path: str | None = None) -> bool:
+    """Chama scripts/send_daily_email.py (passa --report se veio do agent)."""
     try:
-        logger.info("📧 Enviando e-mail diário via scripts/send_daily_email.py ...")
-        out = subprocess.run(
-            ["python", "-u", "scripts/send_daily_email.py"],
-            capture_output=True, text=True, check=False
-        )
+        cmd = ["python", "-u", "scripts/send_daily_email.py"]
+        if report_path:
+            cmd += ["--report", str(report_path)]
+        logger.info(f"📧 Executando: {' '.join(cmd)}")
+        out = subprocess.run(cmd, capture_output=True, text=True)
         if out.stdout:
             logger.info("send_daily_email.py STDOUT:\n" + out.stdout)
         if out.returncode != 0:
@@ -67,8 +78,8 @@ def send_daily_email_via_script():
         return False
 
 def send_error_notification(msg: str):
+    """Tenta notificar por e-mail, mas não derruba o worker se falhar."""
     try:
-        logger.info("🚨 Enviando notificação de erro...")
         subprocess.run(
             ["python", "-u", "scripts/send_error_notification.py", "Insurance News Agent - Erro", msg],
             check=False
@@ -77,41 +88,41 @@ def send_error_notification(msg: str):
         logger.error(f"Falha ao acionar notificação de erro: {e}")
 
 def run_once():
+    """Executa a coleta do dia e envia o e-mail."""
     try:
         agent = InsuranceNewsAgent()
         result = agent.run_daily_collection()
-        logger.info(f"✅ Coleta OK: {result['unique_articles_after_dedup']} únicos "
-                    f"(dup removidas: {result['duplicates_removed']})")
-        # pegue os caminhos que o agente acabou de salvar
+        logger.info(
+            f"✅ Coleta OK: {result['unique_articles_after_dedup']} únicos "
+            f"(dup removidas: {result['duplicates_removed']})"
+        )
+
+        # Pega caminho salvo pelo ReportGenerator
         report_html = result.get("html_report_path")
         report_json = result.get("json_report_path")
         report_path = report_html or report_json
+        if report_path:
+            logger.info(f"🗂️ Report detectado: {report_path}")
+        else:
+            logger.warning("⚠️ Nenhum caminho de relatório no resultado; sender tentará auto-descobrir.")
 
-if report_path:
-    ok_email = send_daily_email_via_script(report_path)
-else:
-    logger.warning("⚠️ Não encontrei report_path no resultado. Vou tentar o auto-detect do sender.")
-    ok_email = send_daily_email_via_script(None)
-
+        ok_email = send_daily_email_via_script(report_path)
         if not ok_email:
-            logger.warning("⚠️ E-mail diário não enviado (verifique credenciais/recipients).")
+            logger.warning("⚠️ E-mail diário não enviado (verifique credenciais e recipients no Railway).")
     except Exception as e:
         logger.error(f"💥 Erro na execução diária: {e}")
         send_error_notification(str(e))
 
 def main():
-    # (debug opcional)
     logger.info(f"PYTHONPATH: {sys.path}")
-
     hh, mm = parse_hhmm(RUN_AT)
-    tz = ZoneInfo(TZ)
 
-    if os.getenv("RUN_NOW", "").lower() in ("1", "true", "yes"):
+    if RUN_NOW:
         logger.info("RUN_NOW ativo — executando imediatamente uma coleta...")
         run_once()
 
     while True:
-        now = datetime.now(tz)
+        now = now_tz()
         nr = next_run(now, hh, mm)
         sleep_sec = max(1, int((nr - now).total_seconds()))
         logger.info(f"⏰ Próxima execução diária: {nr.isoformat()} (em {sleep_sec}s)")
