@@ -30,7 +30,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Generate report
-        run: python -u src/main.py --action collect
+        run: python -u -m src.main --action collect
 
       - name: Resolve latest report path
         id: rp
