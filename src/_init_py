@@ -1,8 +1,1 @@
-"""
-Insurance News Agent - Sistema automatizado de coleta e envio de notícias do mercado de seguros
-"""
-
-__version__ = "1.0.0"
-__author__ = "Insurance News Agent"
-__description__ = "Agente automatizado para varredura e consolidação de notícias do mercado de seguros"
 
