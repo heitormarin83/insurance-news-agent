@@ -60,13 +60,24 @@ def next_run(now, hh, mm):
     return target
 
 def send_daily_email_via_script(report_path: str | None = None) -> bool:
-    """Chama scripts/send_daily_email.py (passa --report se veio do agent)."""
+    """
+    Chama o sender como MÓDULO: python -m scripts.send_daily_email [--report <path>]
+    Isso evita problemas de sys.path quando executado de /app/scripts.
+    """
     try:
+        # monta comando
         cmd = ["python", "-u", "-m", "scripts.send_daily_email"]
         if report_path:
-    cmd += ["--report", str(report_path)]
+            cmd += ["--report", str(report_path)]
+
+        # garante PYTHONPATH no subprocesso
+        env = os.environ.copy()
+        extra = f"{BASE_DIR}:{BASE_DIR/'src'}"
+        env["PYTHONPATH"] = (extra + ":" + env.get("PYTHONPATH", "")).rstrip(":")
+
         logger.info(f"📧 Executando: {' '.join(cmd)}")
-        out = subprocess.run(cmd, capture_output=True, text=True)
+        out = subprocess.run(cmd, capture_output=True, text=True, env=env)
+
         if out.stdout:
             logger.info("send_daily_email.py STDOUT:\n" + out.stdout)
         if out.returncode != 0:
@@ -80,10 +91,11 @@ def send_daily_email_via_script(report_path: str | None = None) -> bool:
 def send_error_notification(msg: str):
     """Tenta notificar por e-mail, mas não derruba o worker se falhar."""
     try:
-        subprocess.run(
-            ["python", "-u", "scripts/send_error_notification.py", "Insurance News Agent - Erro", msg],
-            check=False
-        )
+        cmd = ["python", "-u", "-m", "scripts.send_error_notification", "Insurance News Agent - Erro", msg]
+        env = os.environ.copy()
+        extra = f"{BASE_DIR}:{BASE_DIR/'src'}"
+        env["PYTHONPATH"] = (extra + ":" + env.get("PYTHONPATH", "")).rstrip(":")
+        subprocess.run(cmd, check=False, env=env)
     except Exception as e:
         logger.error(f"Falha ao acionar notificação de erro: {e}")
 
