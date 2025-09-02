@@ -1,35 +1,28 @@
 # scripts/send_daily_email.py
 """
 Envia o relatório diário por e-mail (Railway).
-- Usa GMAIL_EMAIL / GMAIL_APP_PASSWORD do ambiente (senha de app com 2FA).
-- Destinatários vêm das ENVs:
-    EMAIL_RECIPIENTS_DAILY, EMAIL_RECIPIENTS_ALERTS, EMAIL_RECIPIENTS_ERRORS
-- Aceita --report para caminho explícito do arquivo (HTML ou JSON).
-- Se não informado, tenta achar o relatório do dia automaticamente.
+...
 """
-
-import argparse
-import datetime
-import glob
-import json
-import os
-import sys
+import argparse, datetime, glob, json, os, sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Logger: tenta usar o do projeto; se não tiver, cai em logging básico
+# --- PATHS: garanta que raiz e src estejam no PYTHONPATH ---
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR / "src"))
+
+# Logger...
 try:
     from src.utils.logger import get_logger
 except Exception:
     import logging
     def get_logger(name: str):
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s | %(levelname)s | %(name)s:%(funcName)s:%(lineno)d - %(message)s"
-        )
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s:%(funcName)s:%(lineno)d - %(message)s")
         return logging.getLogger(name)
 
 logger = get_logger("send_daily_email")
+
 
 # EmailManager do projeto (já ajustado para ler ENV e sobrescrever recipients)
 from src.email_sender.email_manager import EmailManager
