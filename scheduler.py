@@ -62,9 +62,9 @@ def next_run(now, hh, mm):
 def send_daily_email_via_script(report_path: str | None = None) -> bool:
     """Chama scripts/send_daily_email.py (passa --report se veio do agent)."""
     try:
-        cmd = ["python", "-u", "scripts/send_daily_email.py"]
+        cmd = ["python", "-u", "-m", "scripts.send_daily_email"]
         if report_path:
-            cmd += ["--report", str(report_path)]
+    cmd += ["--report", str(report_path)]
         logger.info(f"📧 Executando: {' '.join(cmd)}")
         out = subprocess.run(cmd, capture_output=True, text=True)
         if out.stdout:
