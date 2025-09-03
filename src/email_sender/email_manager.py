@@ -4,12 +4,13 @@ from __future__ import annotations
 """
 EmailManager: envio de e-mails via SMTP (Gmail/Workspace).
 
-- Lê configurações do YAML (config/email_config.yaml), mas é tolerante a arquivo
-  faltando ou inválido: cai em defaults seguros.
-- Sobrescreve as listas de destinatários via variáveis de ambiente:
-    EMAIL_RECIPIENTS_DAILY, EMAIL_RECIPIENTS_ALERTS, EMAIL_RECIPIENTS_ERRORS
-- Credenciais via ambiente:
-    GMAIL_EMAIL, GMAIL_APP_PASSWORD  (senha de app; 2FA ativado)
+Robustez:
+- Lê YAML (config/email_config.yaml), mas tolera ausência/erro e usa defaults.
+- Sobrescreve DESTINATÁRIOS via ENV: EMAIL_RECIPIENTS_DAILY, EMAIL_RECIPIENTS_ALERTS, EMAIL_RECIPIENTS_ERRORS
+- Sobrescreve SMTP via ENV (opcional): SMTP_SERVER, SMTP_PORT, SMTP_USE_TLS, SMTP_SENDER_NAME
+- Credenciais via ENV: GMAIL_EMAIL, GMAIL_APP_PASSWORD (senha de app; 2FA)
+- Fallback: se 587+STARTTLS falhar, tenta 465+SSL.
+- Debug SMTP opcional: SMTP_DEBUG=1
 """
 
 import os
@@ -29,7 +30,6 @@ try:
     from src.utils.logger import get_logger
 except Exception:
     import logging
-
     def get_logger(name: str):
         logging.basicConfig(
             level=logging.INFO,
@@ -48,6 +48,11 @@ def _split_emails(value: Optional[str]) -> List[str]:
         return []
     return [e.strip() for e in value.split(",") if e.strip()]
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 def _shallow_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Merge raso (apenas nível superior) para manter defaults."""
@@ -61,7 +66,6 @@ def _shallow_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, 
             result[k] = v
     return result
 
-
 # -------------------------------------------------------------------------
 # Classe principal
 # -------------------------------------------------------------------------
@@ -69,10 +73,10 @@ class EmailManager:
     """
     Envia e-mails HTML com anexos opcionais.
 
-    Prioridade de configuração:
+    Prioridade:
       1) Defaults internos
-      2) YAML (se válido)
-      3) Variáveis de ambiente para *destinatários* (ENV vence o YAML)
+      2) YAML (merge raso)
+      3) ENV para destinatários e (opcionalmente) SMTP
     """
 
     def __init__(self, config_path: str | os.PathLike = "config/email_config.yaml"):
@@ -80,17 +84,9 @@ class EmailManager:
         self.config = self._load_config_tolerant(self.config_path)
         self._apply_env_overrides()
         # Log seguro (não expõe senhas)
-        logger.info(
-            "🔠 Config de e-mail carregada (recipients resolvidos): %s",
-            self.config.get("recipients", {}),
-        )
-        logger.info(
-            "🔠 SMTP host=%s port=%s use_tls=%s sender_name=%s",
-            self.config.get("smtp", {}).get("server"),
-            self.config.get("smtp", {}).get("port"),
-            self.config.get("smtp", {}).get("use_tls"),
-            self.config.get("smtp", {}).get("sender_name"),
-        )
+        logger.info(f"🔠 Recipients resolvidos: {self.config.get('recipients', {})}")
+        s = self.config.get("smtp", {})
+        logger.info(f"🔠 SMTP server={s.get('server')} port={s.get('port')} use_tls={s.get('use_tls')} sender_name={s.get('sender_name')}")
 
     # ------------------------- Carregamento -------------------------------
 
@@ -143,28 +139,28 @@ class EmailManager:
         base = self._defaults()
         try:
             if not cfg_path.exists():
-                logger.warning("Config %s não encontrada; usando defaults.", cfg_path)
+                logger.warning(f"Config {cfg_path} não encontrada; usando defaults.")
                 return base
             try:
                 import yaml
             except Exception as e:
-                logger.error("PyYAML não disponível (%s); usando defaults.", e)
+                logger.error(f"PyYAML indisponível ({e}); usando defaults.")
                 return base
 
             with cfg_path.open("r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             if not isinstance(data, dict):
-                logger.error("Config YAML não é dict (%s); usando defaults.", type(data).__name__)
+                logger.error(f"Config YAML não é dict ({type(data).__name__}); usando defaults.")
                 return base
             return _shallow_merge(base, data)
         except Exception as e:
-            logger.error("Config YAML inválida (%s); usando defaults. Erro: %s", cfg_path, e)
+            logger.error(f"Config YAML inválida ({cfg_path}); usando defaults. Erro: {e}")
             return base
 
     def _apply_env_overrides(self) -> None:
-        """Sobrescreve listas de destinatários via ENV (se fornecidas)."""
+        """Sobrescreve listas de destinatários e (opcional) SMTP via ENV."""
         rec = self.config.setdefault("recipients", {})
-        env_daily = _split_emails(os.getenv("EMAIL_RECIPIENTS_DAILY"))
+        env_daily  = _split_emails(os.getenv("EMAIL_RECIPIENTS_DAILY"))
         env_alerts = _split_emails(os.getenv("EMAIL_RECIPIENTS_ALERTS"))
         env_errors = _split_emails(os.getenv("EMAIL_RECIPIENTS_ERRORS"))
 
@@ -182,6 +178,20 @@ class EmailManager:
             rec["errors"] = env_errors
         else:
             rec.setdefault("errors", [])
+
+        # SMTP via ENV (opcional)
+        smtp = self.config.setdefault("smtp", {})
+        if os.getenv("SMTP_SERVER"):
+            smtp["server"] = os.getenv("SMTP_SERVER")
+        if os.getenv("SMTP_PORT"):
+            try:
+                smtp["port"] = int(os.getenv("SMTP_PORT"))
+            except Exception:
+                logger.warning("SMTP_PORT inválido; mantendo %s", smtp.get("port"))
+        if os.getenv("SMTP_USE_TLS") is not None:
+            smtp["use_tls"] = _env_bool("SMTP_USE_TLS", smtp.get("use_tls", True))
+        if os.getenv("SMTP_SENDER_NAME"):
+            smtp["sender_name"] = os.getenv("SMTP_SENDER_NAME")
 
     # --------------------------- Envio -----------------------------------
 
@@ -215,11 +225,7 @@ class EmailManager:
 
         recipients = self.config.get("recipients", {}).get(list_key, [])
         if not recipients:
-            logger.error(
-                "❌ Lista de destinatários vazia para '%s'. Defina EMAIL_RECIPIENTS_%s ou ajuste o YAML.",
-                list_key,
-                list_key.upper(),
-            )
+            logger.error(f"❌ Lista de destinatários vazia para '{list_key}'. Defina EMAIL_RECIPIENTS_{list_key.upper()} ou ajuste o YAML.")
             return False
 
         # Monta a mensagem
@@ -236,7 +242,7 @@ class EmailManager:
         for fpath in (attachments or []):
             p = Path(fpath)
             if not p.exists():
-                logger.warning("Anexo não encontrado e ignorado: %s", p)
+                logger.warning(f"Anexo não encontrado e ignorado: {p}")
                 continue
             part = MIMEBase("application", "octet-stream")
             part.set_payload(p.read_bytes())
@@ -244,28 +250,42 @@ class EmailManager:
             part.add_header("Content-Disposition", f'attachment; filename="{p.name}"')
             msg.attach(part)
 
-        # Envio SMTP
+        debug_smtp = _env_bool("SMTP_DEBUG", False)
+
+        # --- Tentativa 1: 587 + STARTTLS (padrão Gmail) ---
         try:
-            if use_tls and port == 587:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(server, port) as smtp:
-                    smtp.ehlo()
+            context = ssl.create_default_context()
+            with smtplib.SMTP(server, 587 if use_tls else port) as smtp:
+                if debug_smtp:
+                    smtp.set_debuglevel(1)
+                smtp.ehlo()
+                if use_tls:
                     smtp.starttls(context=context)
                     smtp.ehlo()
-                    smtp.login(gmail_user, gmail_pass)
-                    smtp.sendmail(gmail_user, recipients, msg.as_string())
-            else:
-                # TLS implícito (465) ou sem TLS (não recomendado)
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(server, port, context=context) as smtp:
-                    smtp.login(gmail_user, gmail_pass)
-                    smtp.sendmail(gmail_user, recipients, msg.as_string())
-            logger.info("✅ E-mail enviado para %s (lista: %s)", recipients, list_key)
+                smtp.login(gmail_user, gmail_pass)
+                smtp.sendmail(gmail_user, recipients, msg.as_string())
+            logger.info(f"✅ E-mail enviado (via {server}:587 STARTTLS) para {recipients}")
             return True
-
         except smtplib.SMTPAuthenticationError as e:
-            logger.error("❌ Falha na autenticação SMTP: %s", e)
+            logger.exception(f"❌ Falha na autenticação SMTP (587): {e}")
             return False
         except Exception as e:
-            logger.error("❌ Erro inesperado ao enviar e-mail: %s", e)
+            logger.warning(f"⚠️ Falhou em 587/STARTTLS: {e} — tentando 465/SSL...")
+
+        # --- Tentativa 2: 465 + SSL (fallback) ---
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(server, 465, context=context) as smtp:
+                if debug_smtp:
+                    smtp.set_debuglevel(1)
+                smtp.login(gmail_user, gmail_pass)
+                smtp.sendmail(gmail_user, recipients, msg.as_string())
+            logger.info(f"✅ E-mail enviado (via {server}:465 SSL) para {recipients}")
+            return True
+        except smtplib.SMTPAuthenticationError as e:
+            logger.exception(f"❌ Falha na autenticação SMTP (465): {e}")
+            return False
+        except Exception as e:
+            # Último recurso: registra stacktrace completa
+            logger.exception(f"❌ Erro inesperado ao enviar e-mail (após fallback): {e}")
             return False
