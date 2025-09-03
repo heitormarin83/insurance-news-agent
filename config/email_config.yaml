@@ -1,27 +1,21 @@
-*** a/config/email_config.yaml
---- b/config/email_config.yaml
-@@
- recipients:
--  alerts: []
--  daily_report: []
--  errors: []
-+  alerts: []         # será sobrescrito por EMAIL_RECIPIENTS_ALERTS (ENV), se existir
-+  daily_report: []   # será sobrescrito por EMAIL_RECIPIENTS_DAILY (ENV), se existir
-+  errors: []         # será sobrescrito por EMAIL_RECIPIENTS_ERRORS (ENV), se existir
- 
- smtp:
-   port: 587
-   sender_name: "Insurance News Agent"
-   server: "smtp.gmail.com"
-   use_tls: true
- 
- templates:
-   alert:
-     subject: "Alerta - Insurance News Agent - {alert_type}"
-     template_file: "alert_template.html"
-   daily_report:
-     subject: "Relatório Diário - Notícias de Seguros - {date}"
-     template_file: "daily_report_template.html"
-   error:
-     subject: "Erro - Insurance News Agent - {error_type}"
-     template_file: "error_template.html"
+recipients:
+  alerts: []
+  daily_report: []
+  errors: []
+
+smtp:
+  server: smtp.gmail.com
+  port: 587
+  use_tls: true
+  sender_name: "Insurance News Agent"
+
+templates:
+  alert:
+    subject: "Alerta - Insurance News Agent - {alert_type}"
+    template_file: "alert_template.html"
+  daily_report:
+    subject: "Relatório Diário - Notícias de Seguros - {date}"
+    template_file: "daily_report_template.html"
+  error:
+    subject: "Erro - Insurance News Agent - {error_type}"
+    template_file: "error_template.html"
