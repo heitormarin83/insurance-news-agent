@@ -1,91 +1,179 @@
-*** a/src/email_sender/email_manager.py
---- b/src/email_sender/email_manager.py
-@@
- import os
- import smtplib
- from email.mime.text import MIMEText
- from email.mime.multipart import MIMEMultipart
- import yaml
-+from typing import List
- 
- class EmailManager:
-     def __init__(self, config_path: str):
--        self.gmail_email = os.getenv("GMAIL_EMAIL")
--        self.gmail_app_password = os.getenv("GMAIL_APP_PASSWORD")
-+        self.gmail_email = os.getenv("GMAIL_EMAIL", "").strip()
-+        self.gmail_app_password = os.getenv("GMAIL_APP_PASSWORD", "").strip()
-         self.config = self._load_config(config_path)
--        if not self.gmail_email or not self.gmail_app_password:
--            self._log_error("❌ GMAIL_EMAIL ou GMAIL_APP_PASSWORD não configurados nas variáveis de ambiente")
-+        if not self.gmail_email or not self.gmail_app_password:
-+            self._log_error("❌ GMAIL_EMAIL ou GMAIL_APP_PASSWORD ausentes no ambiente (Railway). Envio de e-mail será pulado.")
- 
-     def _load_config(self, config_path: str):
-         abs_path = os.path.abspath(config_path)
-         self._log_info(f"🔠 Caminho absoluto final do config: {abs_path}")
-         with open(abs_path, "r", encoding="utf-8") as f:
-             cfg = yaml.safe_load(f)
-         self._log_info("🔠 Configuração de e-mail carregada")
--        self._log_info(f"🔠 Conteúdo carregado da configuração: {cfg}")
-+        # Sobrescreve recipientes a partir de variáveis de ambiente, se existirem
-+        def parse_list(env_key: str) -> List[str]:
-+            raw = os.getenv(env_key, "")
-+            if not raw:
-+                return []
-+            return [e.strip() for e in raw.split(",") if e.strip()]
-+
-+        recipients_env = {
-+            "daily_report": parse_list("EMAIL_RECIPIENTS_DAILY"),
-+            "alerts": parse_list("EMAIL_RECIPIENTS_ALERTS"),
-+            "errors": parse_list("EMAIL_RECIPIENTS_ERRORS"),
-+        }
-+        for key, env_list in recipients_env.items():
-+            if env_list:
-+                cfg.setdefault("recipients", {})
-+                cfg["recipients"][key] = env_list
-+
-+        self._log_info(f"🔠 Config final (com ENV aplicadas nos recipients): {cfg}")
-         return cfg
- 
-     def authenticate(self):
--        if not self.gmail_email or not self.gmail_app_password:
--            self._log_error("❌ GMAIL_EMAIL e GMAIL_APP_PASSWORD não configurados corretamente.")
--            return None
-+        if not self.gmail_email or not self.gmail_app_password:
-+            self._log_error("❌ Credenciais ausentes. Pular autenticação.")
-+            return None
-         try:
-             server = smtplib.SMTP(self.config["smtp"]["server"], self.config["smtp"]["port"])
-             if self.config["smtp"].get("use_tls", True):
-                 server.starttls()
-             server.login(self.gmail_email, self.gmail_app_password)
-             return server
-         except Exception as e:
-             self._log_error(f"❌ Falha na autenticação do e-mail: {e}")
-             return None
- 
-     def send_email(self, subject: str, html_body: str, list_key: str):
--        recipients = self.config["recipients"].get(list_key, [])
-+        recipients = self.config.get("recipients", {}).get(list_key, [])
-         if not recipients:
-             self._log_error(f"❌ Lista de destinatários vazia para '{list_key}'. E-mail não será enviado.")
-             return False
--        server = self.authenticate()
-+        server = self.authenticate()
-         if not server:
--            self._log_error("❌ Falha na autenticação do e-mail")
-+            self._log_error("❌ Sem servidor SMTP (credenciais ausentes ou inválidas). Pulando envio.")
-             return False
-         try:
-             msg = MIMEMultipart("alternative")
-             msg["From"] = f"{self.config['smtp'].get('sender_name', 'Insurance News Agent')} <{self.gmail_email}>"
-             msg["To"] = ", ".join(recipients)
-             msg["Subject"] = subject
-             msg.attach(MIMEText(html_body, "html", "utf-8"))
-             server.sendmail(self.gmail_email, recipients, msg.as_string())
-             server.quit()
-             self._log_info(f"✅ E-mail enviado para {recipients}")
-             return True
-         except Exception as e:
-             self._log_error(f"❌ Erro no envio do e-mail: {e}")
-             return False
+# src/email_sender/email_manager.py
+from __future__ import annotations
+
+import os
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from pathlib import Path
+from typing import Iterable, List, Optional, Dict, Any
+
+# Logger do projeto; se faltar, usa um básico
+try:
+    from src.utils.logger import get_logger
+except Exception:
+    import logging
+    def get_logger(name: str):
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s | %(levelname)s | %(name)s:%(funcName)s:%(lineno)d - %(message)s"
+        )
+        return logging.getLogger(name)
+
+logger = get_logger("src.email_sender.email_manager")
+
+try:
+    import yaml
+except Exception as e:
+    logger.error("PyYAML não está instalado. Adicione 'PyYAML' ao requirements.txt.")
+    raise
+
+
+def _split_emails(value: Optional[str]) -> List[str]:
+    """Converte 'a@x,b@y ,  c@z' -> ['a@x','b@y','c@z']"""
+    if not value:
+        return []
+    return [e.strip() for e in value.split(",") if e.strip()]
+
+
+class EmailManager:
+    """
+    Envia e-mails via SMTP (Gmail/Workspace) usando:
+      - Credenciais nas ENVs: GMAIL_EMAIL / GMAIL_APP_PASSWORD
+      - Destinatários nas ENVs: EMAIL_RECIPIENTS_DAILY / ALERTS / ERRORS
+      - Configurações default em config/email_config.yaml
+    """
+
+    def __init__(self, config_path: str | os.PathLike = "config/email_config.yaml"):
+        self.config_path = self._resolve_config_path(config_path)
+        self.config = self._load_config()
+        self._apply_env_overrides()
+        logger.info("🔠 Configuração de e-mail carregada")
+        logger.info(
+            "🔠 Conteúdo carregado da configuração (com ENV aplicadas nos recipients): %s",
+            {
+                "recipients": self.config.get("recipients", {}),
+                "smtp": self.config.get("smtp", {}),
+                "templates": list(self.config.get("templates", {}).keys()),
+            },
+        )
+
+    # ---------- Carregamento e overrides ----------
+
+    def _resolve_config_path(self, path: str | os.PathLike) -> Path:
+        p = Path(path)
+        if p.is_file():
+            return p
+        # tenta relativo ao diretório do app
+        candidate = Path(__file__).resolve().parents[2] / path  # .../src/email_sender/ -> raiz
+        return candidate if candidate.is_file() else p
+
+    def _load_config(self) -> Dict[str, Any]:
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Arquivo de configuração não encontrado: {self.config_path}")
+        with self.config_path.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    def _apply_env_overrides(self) -> None:
+        """Sobrescreve destinatários via ENV, se fornecidos."""
+        rec = self.config.setdefault("recipients", {})
+        env_daily  = _split_emails(os.getenv("EMAIL_RECIPIENTS_DAILY"))
+        env_alerts = _split_emails(os.getenv("EMAIL_RECIPIENTS_ALERTS"))
+        env_errors = _split_emails(os.getenv("EMAIL_RECIPIENTS_ERRORS"))
+
+        if env_daily:
+            rec["daily_report"] = env_daily
+        else:
+            rec.setdefault("daily_report", [])
+
+        if env_alerts:
+            rec["alerts"] = env_alerts
+        else:
+            rec.setdefault("alerts", [])
+
+        if env_errors:
+            rec["errors"] = env_errors
+        else:
+            rec.setdefault("errors", [])
+
+    # ---------- Envio ----------
+
+    def send_email(
+        self,
+        subject: str,
+        html_body: str,
+        list_key: str = "daily_report",
+        attachments: Optional[Iterable[os.PathLike | str]] = None,
+        reply_to: Optional[str] = None,
+    ) -> bool:
+        """
+        Envia e-mail HTML para a lista indicada (default: daily_report).
+        Retorna True/False.
+        """
+        gmail_user = os.getenv("GMAIL_EMAIL")
+        gmail_pass = os.getenv("GMAIL_APP_PASSWORD")
+
+        if not gmail_user or not gmail_pass:
+            logger.error("❌ GMAIL_EMAIL e/ou GMAIL_APP_PASSWORD não configurados nas variáveis de ambiente")
+            return False
+
+        smtp_cfg = self.config.get("smtp", {})
+        server = smtp_cfg.get("server", "smtp.gmail.com")
+        port = int(smtp_cfg.get("port", 587))
+        use_tls = bool(smtp_cfg.get("use_tls", True))
+        sender_name = smtp_cfg.get("sender_name", "Insurance News Agent")
+
+        recipients = self.config.get("recipients", {}).get(list_key, [])
+        if not recipients:
+            logger.error(f"❌ Lista de destinatários vazia para '{list_key}'. Defina EMAIL_RECIPIENTS_{list_key.upper()} ou ajuste o YAML.")
+            return False
+
+        # Monta mensagem
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{sender_name} <{gmail_user}>"
+        msg["To"] = ", ".join(recipients)
+        if reply_to:
+            msg["Reply-To"] = reply_to
+
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        # Anexos (opcional)
+        for fpath in (attachments or []):
+            p = Path(fpath)
+            if not p.exists():
+                logger.warning(f"Anexo não encontrado e ignorado: {p}")
+                continue
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(p.read_bytes())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="{p.name}"')
+            msg.attach(part)
+
+        # Envio SMTP
+        try:
+            if use_tls and port == 587:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(server, port) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls(context=context)
+                    smtp.ehlo()
+                    smtp.login(gmail_user, gmail_pass)
+                    smtp.sendmail(gmail_user, recipients, msg.as_string())
+            else:
+                # TLS implicito (465) ou sem TLS (não recomendado)
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(server, port, context=context) as smtp:
+                    smtp.login(gmail_user, gmail_pass)
+                    smtp.sendmail(gmail_user, recipients, msg.as_string())
+            logger.info("✅ E-mail enviado para %s (lista: %s)", recipients, list_key)
+            return True
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"❌ Falha na autenticação SMTP: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erro inesperado ao enviar e-mail: {e}")
+            return False
