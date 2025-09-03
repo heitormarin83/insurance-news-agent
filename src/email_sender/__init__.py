@@ -1,12 +1,4 @@
-"""
-Pacote de envio de e-mails do Insurance News Agent
-Expondo as interfaces públicas: EmailManager e EmailTemplate
-"""
-
+# src/email_sender/__init__.py
 from .email_manager import EmailManager
-from .email_template import EmailTemplate
 
-__all__ = [
-    'EmailManager',
-    'EmailTemplate'
-]
+__all__ = ["EmailManager"]
